@@ -9,6 +9,7 @@ function showReaderState() {
     if (notesViewEl) notesViewEl.style.display = "none";
     document.getElementById("reader-view").classList.add("active");
     document.getElementById("reader-view").style.display = "flex";
+    document.getElementById("stats-view").style.display = "none";
 
     // 2. HIDE all administrative library tools from the navbar
     document.getElementById("upload-label").style.display = "none";
