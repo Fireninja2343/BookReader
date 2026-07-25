@@ -96,10 +96,11 @@ function showLibraryState() {
 
 function setupKeyboardListeners() {
   window.addEventListener("keydown", (e) => {
-    const readerActive = document
-      .getElementById("reader-view")
-      .classList.contains("active");
-    if (!readerActive) return;
+    const readerActive = document.getElementById("reader-view").classList.contains("active");
+    const noteActive = document.getElementById("note-editor-modal")?.open ?? false;
+    if (!readerActive || noteActive) return;
+    const isTyping = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+    if (isTyping) return;
     if (e.key === "ArrowRight") {
       e.preventDefault();
       stepToNextChapter();

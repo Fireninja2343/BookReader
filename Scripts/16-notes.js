@@ -214,8 +214,7 @@ function openNoteEditorModal({
   noteEditorEditingNoteId = editingNoteId;
   noteEditorBookContext = { bookId, bookTitle };
 
-  document.getElementById("note-editor-modal-heading").innerText =
-    editingNoteId ? "Edit Note" : "Add Note";
+  document.getElementById("note-editor-modal-heading").innerText = editingNoteId ? "Edit Note" : "Add Note";
 
   document.getElementById("note-editor-text-input").value = selectedText;
   document.getElementById("note-editor-comment-input").value = comment;
