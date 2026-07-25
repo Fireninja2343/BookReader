@@ -97,14 +97,14 @@ function stopActiveReadingTimer() {
 // nets above all go through the exact same save path.
 function saveTimeToDB() {
     if (!activeBookObject || !activeBookObject.id) return;
-
+    const timeSpent = activeBookObject.timeSpentSeconds;
     const now = new Date().getTime();
     const transaction = db.transaction([Config.Db.STORE_BOOKS], "readwrite");
     const store = transaction.objectStore(Config.Db.STORE_BOOKS);
     store.get(activeBookObject.id).onsuccess = (e) => {
         const record = e.target.result;
         if (record) {
-            record.timeSpentSeconds = activeBookObject.timeSpentSeconds;
+            record.timeSpentSeconds = timeSpent;
             record.lastModified = now;
             store.put(record);
         }
@@ -117,11 +117,6 @@ function saveTimeToDB() {
     */
     if (typeof persistHistorySegment === "function") persistHistorySegment();
 
-    /*
-    Mirrors the updated lastModified into activeBookObject, keeping the
-    in-memory reader state consistent with the database write, like the other
-    session-related updates already do.
-    */
     activeBookObject.lastModified = now;
 }
 
