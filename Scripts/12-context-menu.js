@@ -95,11 +95,11 @@ function stopActiveReadingTimer() {
 
 function pauseActiveReadingTimer(pause = true){
     if(pause){
-        document.getElementById("pause-tracking").style.display = "inline-block";
-        document.getElementById("unpause-tracking").style.display = "none";
-    } else if(!pause){
         document.getElementById("pause-tracking").style.display = "none";
         document.getElementById("unpause-tracking").style.display = "inline-block";
+    } else if(!pause){
+        document.getElementById("pause-tracking").style.display = "inline-block";
+        document.getElementById("unpause-tracking").style.display = "none";
     }
     pauseTracking = pause;
 }
