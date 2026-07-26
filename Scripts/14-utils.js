@@ -264,6 +264,7 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
 function formatDateOnly(timestamp) {
     if (!timestamp) return "Unknown";
 
@@ -275,6 +276,7 @@ function formatDateOnly(timestamp) {
 
     return `${day}/${month}/${year}`;
 }
+
 /*
  LIGHTWEIGHT MARKDOWN - note/comment display formatting
 

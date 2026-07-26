@@ -43,6 +43,7 @@
     <script src="Scripts/18-timeline.js" defer></script>
     <script src="Scripts/19-danger-zone.js" defer></script>
     <script src="Scripts/20-soft-sync.js" defer></script>
+    <script src="Scripts/21-version-badge.js" defer></script>
 </head>
 
 <body>
@@ -452,6 +453,14 @@
             </div>
         </div>
     </div>
+    <div id="app-version-badge" title="Checking for updates...">
+        <span id="app-version-badge-text">v…</span>
+        <svg id="app-version-badge-icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+            <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08a5.99 5.99 0 01-5.65 4c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L14 11h7V4l-3.35 3.35z"
+             fill="currentColor"/>
+        </svg>
+    </div>
+
     <div id="sign-in">
             <button id="btn-sync-signin" onclick="signInWithGoogle()">🔄 Sign in to Sync</button>
             <span id="sync-status">☁️ Not signed in</span>
@@ -459,6 +468,8 @@
             title="Clears cached app files and reloads - use this if the app is acting stale or a Service Worker/PWA update isn't showing up">
             🧹 Hard Reload</button>
     </div>
+
+    <div id="version-toast" class="hidden"></div>
 
     <footer>
         <div id="footer-left">

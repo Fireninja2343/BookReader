@@ -83,4 +83,19 @@ const Config = {
     HEATMAP_REFERENCE_PERCENTILE: 0.9,
     HEATMAP_MIN_DAYS_FOR_PERCENTILE_REFERENCE: 5,
   },
+  VersionBadge: {
+    REPO_OWNER: "Fireninja2343",
+    REPO_NAME: "EpubReader",
+    REPO_BRANCH: "Notes&Firebase-sync",
+    // 1.0 - First Release
+    // 1.1 - Firebase Sync
+    // 1.2 - Notes
+    // 1.3+ - Future
+    MAJOR_MINOR: "1.2",
+    CACHE_KEY: "EpubReader_VersionBadgeCache_v1",
+    AUTO_REFRESH_MS: 15 * 60 * 1000,
+    CACHE_TTL_MS: 5 * 60 * 1000,
+    MANUAL_REFRESH_COOLDOWN: 10 * 1000,
+    TIME_BEFORE_SHOWING_DATE: 1000 * 60 * 60 * 24 * 30 * 1, // *1000 -> s, *60 -> min, *60 -> h, *24 -> days, *30 -> months, *1 -> month amount
+  },
 };

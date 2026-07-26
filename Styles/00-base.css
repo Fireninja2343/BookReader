@@ -385,3 +385,52 @@ input[type="range"]::-moz-range-thumb {
 #sign-in button {
     white-space: nowrap;
 }
+
+/* --- Version badge (bottom-right, above #sign-in) --- */
+#app-version-badge {
+    position: fixed;
+    right: 16px;
+    bottom: 78px;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s ease-in-out;
+}
+
+#app-version-badge:hover {
+    color: var(--text-main);
+}
+
+#app-version-badge-icon {
+    flex-shrink: 0;
+}
+
+/* --- Version-check toast (centered, just above the footer) --- */
+#version-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 60px;
+    transform: translateX(-50%);
+    z-index: 950;
+    background-color: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+#version-toast.visible {
+    opacity: 1;
+}
