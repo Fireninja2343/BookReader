@@ -35,6 +35,7 @@ const DB_UPDATE_FREQUENCY = Config.Sync.CLOUD_PROGRESS_PUSH_INTERVAL_MS / 1000;
 const TRACKING_TICK_MS = Config.Reading.TRACKING_TICK_MS;
 
 let lastActivityTime = Date.now();
+let pauseTracking = false;
 
 // Tracks physical activity or autoscroller movement, so the timer can
 // distinguish active reading from an abandoned focused tab.
@@ -66,7 +67,7 @@ function startActiveReadingTimer() {
         // Condition: Must be inside a book workspace layer, and tab window must be active focus target
         const readerActive = document.getElementById("reader-view").classList.contains("active");
         const isUserActive = (Date.now() - lastActivityTime) < IDLE_THRESHOLD_MS;
-        if (readerActive && activeBookObject && document.hasFocus() && !document.hidden && isUserActive) {
+        if (readerActive && activeBookObject && document.hasFocus() && !document.hidden && isUserActive && !pauseTracking) {
             if (!activeBookObject.timeSpentSeconds) activeBookObject.timeSpentSeconds = 0;
             activeBookObject.timeSpentSeconds += (TRACKING_TICK_MS / 1000); // Increments ticker loop heartbeat frequency step bounds
             /*
@@ -90,6 +91,17 @@ function startActiveReadingTimer() {
 function stopActiveReadingTimer() {
     clearInterval(focusedTimeTrackerHeartbeatInterval);
     focusedTimeTrackerHeartbeatInterval = null;
+}
+
+function pauseActiveReadingTimer(pause = true){
+    if(pause){
+        document.getElementById("pause-tracking").hidden = true;
+        document.getElementById("unpause-tracking").hidden = false;
+    } else if(!pause){
+        document.getElementById("pause-tracking").hidden = false;
+        document.getElementById("unpause-tracking").hidden = true;
+    }
+    pauseTracking = pause;
 }
 
 // Writes the in-memory timeSpentSeconds value to the book's DB record. Pulled

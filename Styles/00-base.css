@@ -143,6 +143,11 @@ button:hover, label.btn:hover {
     transform: scale(1.03);
 }
 
+#pause-tracking, #unpause-tracking{
+    font-size: 13px;
+    padding: 6px 3px;
+}
+
 
 select {
     background-color: var(--bg-card);

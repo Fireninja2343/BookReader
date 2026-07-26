@@ -91,6 +91,11 @@
         font-size: 11px;
         padding: 4px 4px;
     }
+    #pause-tracking, #unpause-tracking{
+        font-size: 10px;
+        padding: 4px 2px;
+    }
+
 
     #current-book-indicator {
         font-size: 10px;
