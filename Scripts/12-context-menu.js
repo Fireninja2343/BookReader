@@ -154,6 +154,7 @@ function continueOrStartReadingSession() {
     if (currentSessionStartTime === null) {
         currentSessionStartTime = now;
         currentSessionStartChapterPointer = activeSpinePointer;
+        currentSessionStartBookScalePct = lastKnownBookScalePct;
         // Opens the matching raw reading-history segment for the calendar
         // heatmap - see 17-reading-history.js. Started at exactly the same
         // moment as the session itself, and closed alongside it below in
@@ -198,6 +199,7 @@ function endReadingSession(reason) {
         currentSessionStartTime = null;
         currentSessionLastInteractionTime = null;
         currentSessionStartChapterPointer = null;
+        currentSessionStartBookScalePct = null;
         return;
     }
 
@@ -215,20 +217,26 @@ function endReadingSession(reason) {
         currentSessionStartTime = null;
         currentSessionLastInteractionTime = null;
         currentSessionStartChapterPointer = null;
+        currentSessionStartBookScalePct = null;
         return;
     }
 
-    // Approximate pages read this session from how far the chapter pointer
-    // moved, scaled against the book's cached chapter/page counts - the
-    // same page-estimation approach used elsewhere in the stats view
-    // (see showStatsViewState()), just scoped to this one session instead
-    // of the whole book.
-    const chapterCount = activeBookObject.chapterCount || 0;
+    // Approximate pages read this session from the whole-book scroll percentage delta
+    // (as tracked by trackReadingProgress() in 10-reader-controls.js), scaled against the book's cached page count.
+    // Using the book-scale % instead of chapters-crossed means real scroll progress inside a single long chapter still counts as pages read,
+    // instead of only registering once a chapter boundary is crossed.
     const totalPages = activeBookObject.totalPages || 0;
     let pagesRead = 0;
-    if (chapterCount > 0 && totalPages > 0 && currentSessionStartChapterPointer !== null) {
-        const chaptersAdvanced = Math.max(0, activeSpinePointer - currentSessionStartChapterPointer);
-        pagesRead = Math.round((chaptersAdvanced / chapterCount) * totalPages);
+    if (totalPages > 0 && currentSessionStartBookScalePct !== null && lastKnownBookScalePct !== null) {
+        const pctAdvanced = Math.max(0, lastKnownBookScalePct - currentSessionStartBookScalePct);
+        pagesRead = Math.round((pctAdvanced / 100) * totalPages);
+    } else {
+        // Fallback: chapters-crossed estimate, used when book-scale % tracking isn't available
+        const chapterCount = activeBookObject.chapterCount || 0;
+        if (chapterCount > 0 && totalPages > 0 && currentSessionStartChapterPointer !== null) {
+            const chaptersAdvanced = Math.max(0, activeSpinePointer - currentSessionStartChapterPointer);
+            pagesRead = Math.round((chaptersAdvanced / chapterCount) * totalPages);
+        }
     }
 
     const sessionRecord = {
@@ -243,6 +251,7 @@ function endReadingSession(reason) {
     currentSessionStartTime = null;
     currentSessionLastInteractionTime = null;
     currentSessionStartChapterPointer = null;
+    currentSessionStartBookScalePct = null;
 
     appendReadingSession(bookId, sessionRecord);
 }
@@ -521,4 +530,3 @@ async function openBookDiagnosticsModal(bookObj, modeType) {
         body.innerHTML = `<span style="color:red">Failed extraction profiles.</span>`;
     }
 }
-

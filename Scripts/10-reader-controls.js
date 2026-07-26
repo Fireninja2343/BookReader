@@ -75,9 +75,8 @@ function handleProgressBarClick(event) {
 }
 
 function trackReadingProgress() {
-    // If a book failed to parse (or hasn't loaded yet) activeSpineArray can be
-    // empty, which would otherwise make chapterWeight = 100 / 0 = Infinity and
-    // turn the progress displays into "NaN%" below.
+    // If a book failed to parse (or hasn't loaded yet) activeSpineArray can be empty,
+    // which would otherwise make chapterWeight = 100 / 0 = Infinity and turn the progress displays into "NaN%" below.
     if (activeSpineArray.length === 0) return;
 
     const container = document.getElementById("reader-container");
@@ -107,13 +106,15 @@ function trackReadingProgress() {
     // 2. CALCULATE GLOBAL FULL-BOOK METRICS
     const chapterWeight = 100 / activeSpineArray.length;
     // Interpolate chapter index location alongside inner percentage weight offsets
-    const bookScalePct = Math.round((activeSpinePointer * chapterWeight) + (innerPct * chapterWeight));
+    const bookScalePct = (activeSpinePointer * chapterWeight) + (innerPct * chapterWeight);
 
     const totalPctDisplay = document.getElementById("percentage-display");
     const progressFillBar = document.getElementById("progress-indicator-bar");
 
-    if (totalPctDisplay) totalPctDisplay.innerText = `${bookScalePct}%`;
-    if (progressFillBar) progressFillBar.style.width = `${bookScalePct}%`;
+    if (totalPctDisplay) totalPctDisplay.innerText = `${Math.round(bookScalePct)}%`;
+    if (progressFillBar) progressFillBar.style.width = `${Math.round(bookScalePct)}%`;
+
+    lastKnownBookScalePct = bookScalePct;
 
     // 3. BACKGROUND MAINTENANCE TASKS
     if (top < maxScroll - 10) {

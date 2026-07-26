@@ -22,6 +22,8 @@ let currentActiveContextBookIndexId = null; // Refers to the targeted row index 
 let currentSessionStartTime = null;
 let currentSessionLastInteractionTime = null;
 let currentSessionStartChapterPointer = null;
+let currentSessionStartBookScalePct = null; // Whole-book % (from trackReadingProgress) at session start, for in-chapter-aware pagesRead
+let lastKnownBookScalePct = 0; // Most recent whole-book % computed by trackReadingProgress(), in 10-reader-controls.js
 
 let loadedBooksMemory = [];
 let loadedGroupsMemory = [];
