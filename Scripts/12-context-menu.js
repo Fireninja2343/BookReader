@@ -154,6 +154,12 @@ function continueOrStartReadingSession() {
     if (currentSessionStartTime === null) {
         currentSessionStartTime = now;
         currentSessionStartChapterPointer = activeSpinePointer;
+        // lastKnownBookScalePct is only updated when trackReadingProgress() actually runs,
+        // so without this call it could still be holding a stale value (0, or left over from a previously open book)
+        // if this is the very first interaction since opening the reader
+        // causing a phantom jump in pagesRead once trackReadingProgress() eventually does run.
+        // Calling it here guarantees the baseline reflects the book's actual current position.
+        if (typeof trackReadingProgress === "function") trackReadingProgress();
         currentSessionStartBookScalePct = lastKnownBookScalePct;
         // Opens the matching raw reading-history segment for the calendar
         // heatmap - see 17-reading-history.js. Started at exactly the same
