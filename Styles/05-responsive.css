@@ -179,9 +179,8 @@
     }
 
     #app-version-badge {
-        right: 10px;
-        bottom: 68px;
-        font-size: 11px;
+        right: 16px;
+        bottom: 85px;
     }
 
     #version-toast {

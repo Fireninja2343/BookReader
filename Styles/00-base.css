@@ -389,8 +389,8 @@ input[type="range"]::-moz-range-thumb {
 /* --- Version badge (bottom-right, above #sign-in) --- */
 #app-version-badge {
     position: fixed;
-    right: 16px;
-    bottom: 78px;
+    right: 32px;
+    bottom: 100px;
     z-index: 900;
     display: flex;
     align-items: center;
