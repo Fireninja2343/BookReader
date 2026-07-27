@@ -252,6 +252,35 @@ function convertBlobToBase64(blobItem) {
   });
 }
 
+function base64ToBlob(base64) {
+  const [header, data] = base64.split(",");
+  const mime = header.match(/:(.*?);/)[1];
+
+  const binary = atob(data);
+  const array = [];
+
+  for (let i = 0; i < binary.length; i++) {
+    array.push(binary.charCodeAt(i));
+  }
+
+  return new Blob([new Uint8Array(array)], { type: mime });
+}
+
+function guessImageMimeType(path) {
+  const ext = path.split(".").pop().toLowerCase();
+  const map = {
+    svg: "image/svg+xml",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    bmp: "image/bmp",
+  };
+  return map[ext] || "image/png";
+}
+ 
+
 // Escapes untrusted text (book titles/authors from an uploaded EPUB's own
 // metadata) before interpolating into innerHTML, so a crafted
 // <title>&lt;img onerror=...&gt;</title> can't execute as real markup.
@@ -409,19 +438,6 @@ function positionFlyoutMenu(menu, triggerEvent) {
   menu.style.top = `${top + window.scrollY}px`;
 }
 
-function base64ToBlob(base64) {
-  const [header, data] = base64.split(",");
-  const mime = header.match(/:(.*?);/)[1];
-
-  const binary = atob(data);
-  const array = [];
-
-  for (let i = 0; i < binary.length; i++) {
-    array.push(binary.charCodeAt(i));
-  }
-
-  return new Blob([new Uint8Array(array)], { type: mime });
-}
 
 /*
  Single source of truth for whether tracked timeSpentSeconds represents

@@ -1,4 +1,3 @@
-
 // =================================================================
 // READER LAUNCH & CHAPTER RENDERING
 // =================================================================
@@ -89,6 +88,9 @@ async function renderActiveChapterFromZip(zipInstance) {
         let imgZipFile = zipInstance.file(absoluteImgPath);
         if (imgZipFile) {
           let imgBlob = await imgZipFile.async("blob");
+          let mimeType = "image/png";
+          if (typeof guessImageMimeType === "function") mimeType = guessImageMimeType(absoluteImgPath);
+          imgBlob = new Blob([imgBlob], { type: mimeType });
           let b64 = await convertBlobToBase64(imgBlob);
           img.setAttribute(attributeName, b64);
           if (img.tagName.toLowerCase() === "image")
