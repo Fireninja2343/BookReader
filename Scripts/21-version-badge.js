@@ -8,6 +8,12 @@
  an immediate re-check (bypassing the cache) and shows a small popup toast
  just above the footer while it does.
 
+ Also checks whether the live GitHub Pages site is actually running that
+ latest commit yet (deploys can lag 20s-1min+ behind the push) - if the
+ site is still on an older commit, or the deploy is in progress/failed,
+ the badge shows a plain "Outdated" / "Deploying..." state instead of
+ pretending everything's current.
+
  To point this at a different repo/branch later (e.g. after a branch
  switch), only Config.VersionBadge in 00-config.js needs to change.
 */
@@ -81,25 +87,37 @@ function writeVersionBadgeCache(data) {
 async function refreshVersionBadge(forceRefresh) {
     const cached = readVersionBadgeCache();
     const cacheIsFresh = cached && (Date.now() - cached.fetchedAt) < VERSION_BADGE_CACHE_TTL_MS;
-    if(forceRefresh && MANUAL_REFRESH_COOLDOWN > Date.now() - refreshedAt){ Alert("Refreshing Too Fast, Slow Down."); return; }
-    
+
+    if (forceRefresh && Date.now() - refreshedAt < MANUAL_REFRESH_COOLDOWN) {
+        showVersionToast("Refreshing too fast, slow down.", true);
+        return;
+    }
+
     if (!forceRefresh && cacheIsFresh) return;
     refreshedAt = Date.now();
     if (forceRefresh) showVersionToast("Version updating…", false);
 
     try {
-        const [commitInfo, commitCount] = await Promise.all([
+        const [commitInfo, commitCount, deployStatus] = await Promise.all([
             fetchLatestCommitInfo(),
             fetchCommitCount(),
+            fetchDeployStatus(),
         ]);
 
         const previousCount = cached ? cached.commitCount : null;
+
+        // "Deployed" only counts as true if the newest deployment's sha
+        // actually matches the branch's newest commit AND that deployment's
+        // last status was a success - a deployment record existing at all
+        // just means one was attempted, not that it's live or that it succeeded.
+        const isDeployed = deployStatus.sha === commitInfo.sha && deployStatus.state === "success";
 
         const data = {
             commitCount,
             sha: commitInfo.sha,
             message: commitInfo.message,
             date: commitInfo.date,
+            isDeployed,
             fetchedAt: Date.now(),
         };
 
@@ -125,7 +143,7 @@ async function fetchLatestCommitInfo() {
 
     const commit = commits[0];
     return {
-        sha: commit.sha ? commit.sha.slice(0, 7) : "",
+        sha: commit.sha || "",
         message: (commit.commit?.message || "").split("\n")[0],
         date: commit.commit?.committer?.date || commit.commit?.author?.date || null,
     };
@@ -154,12 +172,49 @@ async function fetchCommitCount() {
     return 1;
 }
 
+/*
+ Checks whether the live GitHub Pages site is actually caught up to the
+ branch's latest commit. A deployment record merely existing only means
+ GitHub attempted a deploy for that sha at some point - it says nothing
+ about whether that deploy actually finished successfully, so the
+ newest deployment's status has to be checked too (its most recent
+ status entry's "state" field, e.g. "success"/"failure"/"in_progress").
+*/
+async function fetchDeployStatus() {
+    const deploymentsUrl = `https://api.github.com/repos/${VERSION_BADGE_REPO_OWNER}/${VERSION_BADGE_REPO_NAME}/deployments?environment=github-pages&per_page=1`;
+    const deploymentsRes = await fetch(deploymentsUrl);
+    if (!deploymentsRes.ok) throw new Error(`GitHub API error: ${deploymentsRes.status}`);
+    const deployments = await deploymentsRes.json();
+    if (!Array.isArray(deployments) || deployments.length === 0) {
+        return { sha: null, state: "unknown" };
+    }
+
+    const latestDeployment = deployments[0];
+
+    const statusesRes = await fetch(latestDeployment.statuses_url);
+    if (!statusesRes.ok) throw new Error(`GitHub API error: ${statusesRes.status}`);
+    const statuses = await statusesRes.json();
+
+    // Statuses are returned newest-first.
+    const latestState = Array.isArray(statuses) && statuses.length > 0 ? statuses[0].state : "unknown";
+
+    return { sha: latestDeployment.sha, state: latestState };
+}
+
 function renderVersionBadge(data) {
     const textEl = document.getElementById("app-version-badge-text");
     const badgeEl = document.getElementById("app-version-badge");
     if (!textEl || !badgeEl) return;
 
-    textEl.innerText = `v${VERSION_BADGE_MAJOR_MINOR}.${data.commitCount}`;
+    if (data.isDeployed === false) {
+        // Distinguish "a deploy is actively running" from "nothing has been
+        // triggered yet / it failed" isn't reliable from state alone in every
+        // case, so this keeps the message intentionally generic rather than
+        // guessing - either way, the site isn't caught up to the latest commit yet.
+        textEl.innerText = `v${VERSION_BADGE_MAJOR_MINOR}.${data.commitCount} (outdated)`;
+    } else {
+        textEl.innerText = `v${VERSION_BADGE_MAJOR_MINOR}.${data.commitCount}`;
+    }
 
     let relativeTime = "unknown time";
     if (data.date) {
@@ -172,7 +227,11 @@ function renderVersionBadge(data) {
         }
     }
 
-    badgeEl.title = `Updated ${relativeTime}${data.message ? `\n"${data.message}"` : ""}`;
+    let title = `Updated ${relativeTime}${data.message ? `\n"${data.message}"` : ""}`;
+    if (data.isDeployed === false) {
+        title += `\nSite hasn't finished deploying this version yet`;
+    }
+    badgeEl.title = title;
 }
 
 // Small self-contained relative-time formatter (not reused from elsewhere
