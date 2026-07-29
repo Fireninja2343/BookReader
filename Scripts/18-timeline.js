@@ -772,9 +772,8 @@ function renderTimelineModeGantt(container, data) {
             widthStyle = `${widthPx.toFixed(1)}px`;
         } else {
             const leftPct = ((startForLayout - globalStart) / totalSpanMs) * 100;
-            // Minimum width floor so a same-day (or very short) completion is still a visible,
-            // clickable/hoverable sliver rather than a zero-width bar that's impossible to hover.
-            const widthPct = Math.max(1, ((endForLayout - startForLayout) / totalSpanMs) * 100);
+            const rawWidthPct = ((endForLayout - startForLayout) / totalSpanMs) * 100;
+            const widthPct = Math.min(Math.max(1, rawWidthPct), 100 - leftPct);
             leftStyle = `${leftPct.toFixed(2)}%`;
             widthStyle = `${widthPct.toFixed(2)}%`;
         }
