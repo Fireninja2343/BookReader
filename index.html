@@ -705,5 +705,14 @@
             </div>
         </div>
     </dialog>
+    <script>
+        if ("serviceWorker" in navigator) {
+            window.addEventListener("load", () => {
+                navigator.serviceWorker.register("sw.js").catch((err) => {
+                    console.warn("[ServiceWorker] Registration failed:", err);
+                });
+            });
+        }
+    </script>
 </body>
 </html>

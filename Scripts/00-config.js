@@ -73,6 +73,9 @@ const Config = {
     APPROX_AVERAGE_CUTOFF_SCALE: 2.5,
     VERY_HIGH_THRESHOLD_PERCENT: 75,
   },
+  Network: {
+    NETWORK_TIMEOUT_MS: 4000,
+  },
   Timelines: {
     GANTT_SCROLL_PX_PER_DAY: 48,
     HEATMAP_MAX_WEEKS : 106,
