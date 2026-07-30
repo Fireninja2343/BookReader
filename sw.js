@@ -105,7 +105,7 @@ self.addEventListener("activate", (event) => {
 });
 
 // Fall back to cache if the network is too slow.
-const NETWORK_TIMEOUT_MS = Config.Network.NETWORK_TIMEOUT_MS;
+const NETWORK_TIMEOUT_MS = 4000;
 
 self.addEventListener("fetch", (event) => {
     // Only cache GET requests.
