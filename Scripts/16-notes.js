@@ -38,6 +38,16 @@ function saveCollapsedNoteTagKeys() {
 let collapsedNoteTagKeys = loadCollapsedNoteTagKeys();
 
 let noteSelectionButton = null;
+
+/*
+ Matches touch-primary devices (phones/tablets) as opposed to a mouse-driven desktop.
+ Used to decide which side of the selection the "Add Note" button renders on - see showNoteSelectionButton() below.
+ A live MediaQueryList rather than a one-time boolean so a device switching input modes 
+ (e.g. a touch laptop with a mouse plugged in) is reflected without a reload.
+*/
+const NOTE_SELECTION_BUTTON_TOUCH_MEDIA_QUERY = window.matchMedia("(hover: none) and (pointer: coarse)");
+
+const NOTE_SELECTION_BUTTON_TOUCH_OFFSET_PX = Config.Miscellaneous.NOTE_SELECTION_BUTTON_TOUCH_OFFSET_PX;
 let noteEditorBookContext = { bookId: null, bookTitle: null };
 let noteEditorEditingNoteId = null; // null while creating; set to a note id while editing that note
 let noteTagPickerNoteId = null; // which note "Move Note (Tag)" is currently acting on
@@ -159,7 +169,19 @@ function showNoteSelectionButton(rect, selectedText) {
   btn.id = "note-selection-trigger-btn";
   btn.className = "note-selection-trigger-btn";
   btn.innerText = "📝 Add Note";
-  btn.style.top = `${Math.max(8, rect.top - 38)}px`;
+
+  /*
+   On touch devices the OS draws its own selection toolbar (copy/cut/paste) directly above the selection rect,
+   the same spot this button used to claim, so the two would overlap and the OS toolbar always won out.
+   Placing the button below the selection instead leaves that native toolbar untouched and still puts the button somewhere the user is already looking.
+   Desktop mouse selections have no such competing toolbar, so this keeps the original above-selection placement there,
+   which reads more naturally next to a cursor.
+  */
+  if (NOTE_SELECTION_BUTTON_TOUCH_MEDIA_QUERY.matches) {
+    btn.style.top = `${rect.bottom + NOTE_SELECTION_BUTTON_TOUCH_OFFSET_PX}px`;
+  } else {
+    btn.style.top = `${Math.max(8, rect.top - 38)}px`;
+  }
   btn.style.left = `${rect.left}px`;
 
   // Without this, the mousedown that precedes the click collapses the
