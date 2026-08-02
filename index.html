@@ -556,6 +556,68 @@
         </div>
     </dialog>
 
+    <dialog id="edit-raw-data-modal" class="custom-modal">
+        <div class="modal-content">
+            <h3>Edit Raw Data</h3>
+            <hr class="hr-divider-spaced" />
+
+            <input type="hidden" id="edit-raw-data-book-id">
+
+            <div class="control-item">
+                <label>Title</label>
+                <input type="text" id="edit-raw-data-title" class="full-width-input">
+            </div>
+            <div class="control-item">
+                <label>Time Spent (minutes)</label>
+                <input type="number" id="edit-raw-data-time-spent" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label>Total Sessions (launch count)</label>
+                <input type="number" id="edit-raw-data-total-sessions" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label>Current Chapter Index</label>
+                <input type="number" id="edit-raw-data-current-chapter" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label>Scroll Offset (px)</label>
+                <input type="number" id="edit-raw-data-scroll-offset" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label>Total Pages</label>
+                <input type="number" id="edit-raw-data-total-pages" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label>Total Words</label>
+                <input type="number" id="edit-raw-data-total-words" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label>Chapter Count</label>
+                <input type="number" id="edit-raw-data-chapter-count" class="full-width-input" min="0" step="1">
+            </div>
+            <div class="control-item">
+                <label class="flex-gap10">
+                    <input type="checkbox" id="edit-raw-data-is-read">
+                    Marked as Read
+                </label>
+            </div>
+
+            <p class="hint-text">
+                This edits the stored database record directly. There's no validation beyond basic
+                number/text checks, so double check values before saving.
+            </p>
+
+            <div class="modal-actions">
+                <button onclick="document.getElementById('edit-raw-data-modal').close()" class="btn-ghost">
+                    Cancel
+                </button>
+                <button onclick="submitEditRawDataModalForm()" class="btn-accent">
+                    Save
+                </button>
+            </div>
+        </div>
+    </dialog>
+
     <div id="book-context-menu">
         <div class="context-item-row" onclick="triggerContextAction('metadata')">📋 View Metadata</div>
         <div class="context-item-row" onclick="triggerContextAction('toggleRead')">✅ Toggle Read Status</div>
@@ -565,6 +627,7 @@
         <div class="context-item-row" onclick="triggerContextAction('editStartDate')">📖 Edit Start Date</div>
         <div class="context-item-row" onclick="triggerContextAction('editCompletionDate')">📆 Edit Completion Date</div>
         <div class="context-item-row" onclick="triggerContextAction('clearCompletionDate')">🗓️ Clear Completion Date</div>
+        <div class="context-item-row" onclick="triggerContextAction('editRawData')">🛠️ Edit Raw Data</div>
         <hr class="hr-divider-tight">
         <div class="context-item-row context-item-danger" onclick="triggerContextAction('delete')">🗑️ Delete Book</div>
     </div>

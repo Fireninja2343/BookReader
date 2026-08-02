@@ -339,6 +339,8 @@ function triggerContextAction(actionKey) {
             setBookCompletionDate(targetBookObj.id, null).then((wasUpdated) => {
                 if (wasUpdated) refreshLibraryAndVisibleStats();
             }); break;
+        case "editRawData":
+            openEditRawDataModal(targetBookObj); break;
         case "metadata":
         case "stats":
             openBookDiagnosticsModal(targetBookObj, actionKey); break;
@@ -459,6 +461,103 @@ function submitCompletionDateModalForm() {
     setBookCompletionDate(bookId, selectedDate).then((wasUpdated) => {
         if (wasUpdated) {
             closeCompletionDateModal();
+            refreshLibraryAndVisibleStats(false);
+        } else {
+            alert("Couldn't find that book to update.");
+        }
+    });
+}
+
+// =================================================================
+// RAW DATA EDIT MODAL
+// Direct edit access to a book's stored IndexedDB fields (title, time
+// spent, session count, progress pointers, etc.) for manual corrections
+// that don't have their own dedicated UI, such as fixing a mis-imported
+// title or a time-tracking figure thrown off by a bug.
+// =================================================================
+function openEditRawDataModal(bookObj) {
+    document.getElementById("edit-raw-data-book-id").value = bookObj.id;
+    document.getElementById("edit-raw-data-title").value = bookObj.title || "";
+    // Stored as seconds; edited as whole minutes for a friendlier input.
+    document.getElementById("edit-raw-data-time-spent").value =
+        Math.round((bookObj.timeSpentSeconds || 0) / 60);
+    document.getElementById("edit-raw-data-total-sessions").value = bookObj.totalSessions || 0;
+    document.getElementById("edit-raw-data-current-chapter").value = bookObj.currentChapter || 0;
+    document.getElementById("edit-raw-data-scroll-offset").value = bookObj.scrollOffset || 0;
+    document.getElementById("edit-raw-data-total-pages").value = bookObj.totalPages ?? "";
+    document.getElementById("edit-raw-data-total-words").value = bookObj.totalWords ?? "";
+    document.getElementById("edit-raw-data-chapter-count").value = bookObj.chapterCount ?? "";
+    document.getElementById("edit-raw-data-is-read").checked = !!bookObj.isRead;
+
+    document.getElementById("edit-raw-data-modal").showModal();
+}
+
+function closeEditRawDataModal() {
+    document.getElementById("edit-raw-data-modal").close();
+}
+
+function submitEditRawDataModalForm() {
+    const bookId = parseInt(document.getElementById("edit-raw-data-book-id").value, 10);
+
+    const titleInput = document.getElementById("edit-raw-data-title").value.trim();
+    if (!titleInput) {
+        alert("Title can't be empty.");
+        return;
+    }
+
+    // Parses a numeric field input, falling back to 0 for blank/invalid entries
+    // rather than writing NaN into the record.
+    const parseIntFieldOrZero = (elementId) => {
+        const raw = document.getElementById(elementId).value;
+        const parsed = parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+    // Same as above, but preserves null for optional fields (totalPages etc.)
+    // left blank, instead of coercing them to 0.
+    const parseIntFieldOrNull = (elementId) => {
+        const raw = document.getElementById(elementId).value;
+        if (raw === "") return null;
+        const parsed = parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const timeSpentMinutes = parseIntFieldOrZero("edit-raw-data-time-spent");
+    const totalSessions = parseIntFieldOrZero("edit-raw-data-total-sessions");
+    const currentChapter = parseIntFieldOrZero("edit-raw-data-current-chapter");
+    const scrollOffset = parseIntFieldOrZero("edit-raw-data-scroll-offset");
+    const totalPages = parseIntFieldOrNull("edit-raw-data-total-pages");
+    const totalWords = parseIntFieldOrNull("edit-raw-data-total-words");
+    const chapterCount = parseIntFieldOrNull("edit-raw-data-chapter-count");
+    const isReadChecked = document.getElementById("edit-raw-data-is-read").checked;
+
+    updateBookRecord(bookId, (record) => {
+        record.title = titleInput;
+        record.timeSpentSeconds = timeSpentMinutes * 60;
+        record.totalSessions = totalSessions;
+        record.currentChapter = currentChapter;
+        record.scrollOffset = scrollOffset;
+        record.totalPages = totalPages;
+        record.totalWords = totalWords;
+        record.chapterCount = chapterCount;
+        record.isRead = isReadChecked;
+        // Clears completedDate if the book was manually un-marked as read, 
+        // mirroring the same rule the "Toggle Read Status" action already applies,
+        // so this modal can't leave a completedDate stranded on a book that's no longer marked as read.
+        if (!isReadChecked) {
+            record.completedDate = null;
+        } else if (!record.completedDate) {
+            record.completedDate = new Date().getTime();
+        }
+    }).then((updatedRecord) => {
+        if (updatedRecord) {
+            // Keep the in-memory active book (if this is the one currently
+            // open in the reader) consistent with what was just saved. Copies
+            // straight off the record updateBookRecord() resolved with,
+            // instead of re-deriving each field from the form a second time.
+            if (activeBookObject && activeBookObject.id === bookId) {
+                Object.assign(activeBookObject, updatedRecord);
+            }
+            closeEditRawDataModal();
             refreshLibraryAndVisibleStats(false);
         } else {
             alert("Couldn't find that book to update.");
