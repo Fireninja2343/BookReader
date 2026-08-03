@@ -429,13 +429,7 @@ function sortLibrary() {
   } else if (mode === "manual") {
     loadedBooksMemory.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   }
-
-  const statsPanel = document.getElementById("stats-view");
-  if (statsPanel && getComputedStyle(statsPanel).display !== "none") {
-    if (typeof showStatsViewState === "function") showStatsViewState();
-  } else {
-    renderLibraryGrid();
-  }
+  renderLibraryGrid();
 }
 
 function applyLibraryInterfaceSettings() {
