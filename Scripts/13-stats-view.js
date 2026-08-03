@@ -670,8 +670,7 @@ async function showStatsViewState() {
             });
         }
 
-        // Stash this book's raw metric values instead of building its row string
-        // immediately - see perBookMetrics comment above.
+        // Stash this book's raw metric values instead of building its row string immediately - see perBookMetrics comment above.
         perBookMetrics.push({
             book,
             isRead,

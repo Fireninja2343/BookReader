@@ -78,6 +78,15 @@ function fetchLocalLibrary() {
       if (typeof migrateMissingLastModified === "function") {
         migrateMissingLastModified();
       }
+      /*
+      Fire-and-forget migration for groups created before placement/drag-and-drop
+      reordering existed. Runs after the two migrations above; assigns dense
+      0-indexed sortOrder values so existing groups render in a stable order
+      instead of being unsorted. See migrateMissingGroupSortOrder() for details.
+      */
+      if (typeof migrateMissingGroupSortOrder === "function") {
+        migrateMissingGroupSortOrder();
+      }
     };
   };
 }
@@ -292,6 +301,49 @@ function migrateMissingLastModified() {
     "lastModified",
     typeof pushGroupToCloud === "function" ? pushGroupToCloud : null,
   );
+}
+
+/*
+ Backfills sortOrder on groups created before drag-and-drop / placement-number reordering
+ existed. Assigns dense 0-indexed values (0, 1, 2, ...) based on each group's current
+ position in loadedGroupsMemory, i.e. whatever order they already happen to load in -
+ the closest available stand-in for "existing order" since none was ever recorded before
+ this field existed.
+
+ Skipped entirely once every group already has a sortOrder, so this only ever runs its
+ write path once per group. Mirrors migrateMissingLastModified()'s shape: single
+ transaction, Promise-wrapped, pushes each touched record to the cloud on completion.
+*/
+function migrateMissingGroupSortOrder() {
+  return new Promise((resolve) => {
+    if (!db) {
+      resolve(0);
+      return;
+    }
+    const groupsMissingSortOrder = loadedGroupsMemory.filter((g) => g.sortOrder == null);
+    if (groupsMissingSortOrder.length === 0) {
+      resolve(0);
+      return;
+    }
+    const transaction = db.transaction([STORE_GROUPS], "readwrite");
+    const store = transaction.objectStore(STORE_GROUPS);
+    const updatedRecords = [];
+    loadedGroupsMemory.forEach((group, idx) => {
+      if (group.sortOrder == null) {
+        group.sortOrder = idx;
+        group.lastModified = new Date().getTime();
+        store.put(group);
+        updatedRecords.push(group);
+      }
+    });
+    transaction.oncomplete = () => {
+      if (typeof pushGroupToCloud === "function") {
+        updatedRecords.forEach((g) => pushGroupToCloud(g));
+      }
+      resolve(updatedRecords.length);
+    };
+    transaction.onerror = () => resolve(0);
+  });
 }
 
 /*

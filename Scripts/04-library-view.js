@@ -9,16 +9,34 @@ function renderLibraryGrid() {
 
   // SCENARIO 1: VIEW GROUPS AND UNASSIGNED SECTIONS (DEFAULT HIERARCHY)
   if (globalLibraryViewMode === "grouped" && activeGroupFilterId === null) {
-    // Render Group Folders First
-    loadedGroupsMemory.forEach((group) => {
+    const sortedGroups = getGroupsSortedByPlacement();
+    sortedGroups.forEach((group) => {
       const card = document.createElement("div");
       card.className = "group-card";
       card.style.setProperty("--card-color", group.backgroundColor);
+      card.setAttribute("draggable", "true");
 
+      card.addEventListener("dragstart", (e) => handleGroupDragStart(e, group.id));
+      card.addEventListener("dragend", handleGroupDragEnd);
+      // Always allow the drop regardless of drag type: book drags (moving books INTO
+      // this group) and group-reorder drags both need dropping enabled on this element.
       card.addEventListener("dragover", (e) => e.preventDefault());
       card.addEventListener("drop", (e) => {
-        e.preventDefault();
-        moveSelectedBooksToGroup(group.id);
+        /*
+        Both "drag a book card onto a group" (existing behavior, moves the book into
+        that group) and "drag a group card onto another group" (new behavior, reorders
+        groups) land on this same element's drop event, distinguished by the
+        dataTransfer marker each drag type sets - see 05-drag-drop.js's
+        handleCardDragStart ("grouped-cards") vs 03-groups.js's handleGroupDragStart
+        ("grouped-groups").
+        */
+        const dragType = e.dataTransfer.getData("text/plain");
+        if (dragType === "grouped-groups") {
+          handleGroupDrop(e, group.id);
+        } else {
+          e.preventDefault();
+          moveSelectedBooksToGroup(group.id);
+        }
       });
 
       card.addEventListener("click", (e) => {

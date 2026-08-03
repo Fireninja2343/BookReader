@@ -505,6 +505,11 @@
                     <span class="hint-text">Select card shade palette</span>
                 </div>
             </div>
+            <div class="control-item control-item-top">
+                <label>Placement</label>
+                <input type="number" id="modal-group-placement" class="full-width-input" min="1" step="1" />
+                <span class="hint-text">1 = first. Moving a group here shifts the others out of the way, same as dragging.</span>
+            </div>
             <div class="modal-actions">
                 <button onclick="closeGroupModal()" class="btn-ghost">Cancel</button>
                 <button id="modal-submit-btn" onclick="submitGroupModalForm()" class="btn-accent">Save Directory</button>

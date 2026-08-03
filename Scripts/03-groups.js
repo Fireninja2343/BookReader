@@ -1,10 +1,6 @@
 // =================================================================
 // STRUCTURAL LOCAL BUNDLE GROUPINGS ENGINES
 // =================================================================
-/*
- Note: the old prompt()-based promptCreateGroup()/promptEditGroup() flow was
- removed as dead code, fully superseded by openGroupModal()/submitGroupModalForm() below.
-*/
 function deleteGroup(groupId) {
   if (!confirm("Are you sure you want to delete this group? (Books inside will return to Global Library view)",)) return;
   
@@ -96,6 +92,24 @@ function openGroupModal(isEditMode = false, groupId = null, name = '', color = C
     document.getElementById("modal-group-name").value = name;
     document.getElementById("modal-group-color").value = color;
 
+    /*
+    Placement is shown to the user as 1-indexed (1 = first), matching how the book
+    drag-drop reorder reads on screen, but stored internally as 0-indexed sortOrder,
+    same convention books already use. Editing an existing group shows its current
+    1-indexed position; creating a new one defaults to "last" (loadedGroupsMemory.length
+    + 1), matching how new books default to sortOrder = loadedBooksMemory.length.
+    */
+    let placementDisplayValue;
+    if (isEditMode) {
+        const sortedGroups = getGroupsSortedByPlacement();
+        const currentIdx = sortedGroups.findIndex((g) => g.id === groupId);
+        placementDisplayValue = currentIdx !== -1 ? currentIdx + 1 : loadedGroupsMemory.length + 1;
+    } else {
+        placementDisplayValue = loadedGroupsMemory.length + 1;
+    }
+    document.getElementById("modal-group-placement").value = placementDisplayValue;
+    document.getElementById("modal-group-placement").max = isEditMode ? loadedGroupsMemory.length : loadedGroupsMemory.length + 1;
+
     modal.showModal(); // Launches native backdrop tracking locks layouts safely
 }
 
@@ -103,10 +117,51 @@ function closeGroupModal() {
     document.getElementById("group-config-modal").close();
 }
 
+// Groups sorted by their current sortOrder, falling back to array position for
+// any not-yet-migrated group missing that field entirely (see migrateMissingGroupSortOrder
+// in 02-db.js, which backfills this in the background - this fallback only covers the
+// brief window before that migration runs).
+function getGroupsSortedByPlacement() {
+    return [...loadedGroupsMemory].sort((a, b) => {
+        const aOrder = a.sortOrder ?? Infinity;
+        const bOrder = b.sortOrder ?? Infinity;
+        return aOrder - bOrder;
+    });
+}
+
+/*
+ Shared re-densify step for both manual placement-number edits and drag-and-drop reorders:
+ given the groups already in their intended order (movingGroupId spliced to wherever it
+ belongs), writes sortOrder = 0, 1, 2, ... across all of them and persists the change.
+
+ Reassigning every group's sortOrder (not just the moved one) is what makes "changing
+ group 4 into group 2" also shift the old 2 into 3 and 3 into 4, instead of creating a
+ duplicate or a gap - the same approach 05-drag-drop.js already uses for books.
+*/
+function persistGroupOrder(orderedGroups) {
+    const transaction = db.transaction([STORE_GROUPS], "readwrite");
+    const store = transaction.objectStore(STORE_GROUPS);
+    orderedGroups.forEach((group, idx) => {
+        group.sortOrder = idx;
+        group.lastModified = new Date().getTime();
+        store.put(group);
+    });
+    transaction.oncomplete = () => {
+        loadedGroupsMemory = orderedGroups;
+        renderLibraryGrid();
+        if (typeof pushGroupToCloud === "function") {
+            orderedGroups.forEach((group) => pushGroupToCloud(group));
+        }
+    };
+}
+
 function submitGroupModalForm() {
     const idVal = document.getElementById("modal-group-id").value;
     const nameVal = document.getElementById("modal-group-name").value.trim();
     const colorVal = document.getElementById("modal-group-color").value;
+    // User-facing placement is 1-indexed; -1 converts it to the 0-indexed sortOrder
+    // convention used internally, matching books.
+    const placementVal = parseInt(document.getElementById("modal-group-placement").value, 10) - 1;
 
     if (!nameVal) {
         alert("Please enter a valid group title.");
@@ -138,7 +193,22 @@ function submitGroupModalForm() {
         };
         transaction.oncomplete = () => {
             closeGroupModal();
-            fetchLocalLibrary();
+            if (updatedRecord) {
+                // Only reorder if the placement actually changed - avoids an unnecessary
+                // second write pass when the user left it at its current position.
+                const sortedGroups = getGroupsSortedByPlacement();
+                const currentIdx = sortedGroups.findIndex((g) => g.id === updatedRecord.id);
+                if (currentIdx !== -1 && currentIdx !== placementVal) {
+                    const withoutMoved = sortedGroups.filter((g) => g.id !== updatedRecord.id);
+                    const clampedIdx = Math.max(0, Math.min(placementVal, withoutMoved.length));
+                    withoutMoved.splice(clampedIdx, 0, updatedRecord);
+                    persistGroupOrder(withoutMoved);
+                } else {
+                    fetchLocalLibrary();
+                }
+            } else {
+                fetchLocalLibrary();
+            }
             if (updatedRecord && typeof pushGroupToCloud === "function") {
                 pushGroupToCloud(updatedRecord);
             }
@@ -156,10 +226,57 @@ function submitGroupModalForm() {
         };
         transaction.oncomplete = () => {
             closeGroupModal();
-            fetchLocalLibrary();
+            const newGroup = { id: newGroupId, name: nameVal, backgroundColor: colorVal, lastModified: createdAt };
+            // newGroup isn't in loadedGroupsMemory yet (it was just created via store.add,
+            // not through a fetch), so it's inserted directly into the existing sorted list
+            // rather than filtered out of one it was never part of.
+            const existingSorted = getGroupsSortedByPlacement();
+            const clampedIdx = Math.max(0, Math.min(placementVal, existingSorted.length));
+            existingSorted.splice(clampedIdx, 0, newGroup);
+            persistGroupOrder(existingSorted);
             if (typeof pushGroupToCloud === "function") {
-                pushGroupToCloud({ id: newGroupId, name: nameVal, backgroundColor: colorVal, lastModified: createdAt });
+                pushGroupToCloud(newGroup);
             }
         };
     }
+}
+
+// =================================================================
+// GROUP DRAG-AND-DROP REORDERING
+// Mirrors 05-drag-drop.js's book reordering, but only ever moves a single
+// group at a time (unlike books, groups have no multi-select), and uses a
+// distinct dataTransfer marker ("grouped-groups" vs books' "grouped-cards")
+// so a group card's existing drop handler (moving books INTO a group) and
+// this new reorder-drop handler don't misfire on each other's drags.
+// =================================================================
+let draggedGroupId = null;
+
+function handleGroupDragStart(e, groupId) {
+    draggedGroupId = groupId;
+    e.dataTransfer.setData("text/plain", "grouped-groups");
+    e.currentTarget.classList.add("dragging");
+}
+
+function handleGroupDragEnd(e) {
+    e.currentTarget.classList.remove("dragging");
+    draggedGroupId = null;
+}
+
+function handleGroupDrop(e, targetGroupId) {
+    // Book cards dropped onto a group card are handled by the existing "drop"
+    // listener in 04-library-view.js's group-card setup (moveSelectedBooksToGroup);
+    // this only runs the reorder when a group card itself was what got dragged.
+    if (draggedGroupId === null || draggedGroupId === targetGroupId) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const sortedGroups = getGroupsSortedByPlacement();
+    const movingGroup = sortedGroups.find((g) => g.id === draggedGroupId);
+    if (!movingGroup) return;
+
+    const withoutMoved = sortedGroups.filter((g) => g.id !== draggedGroupId);
+    const targetIdx = withoutMoved.findIndex((g) => g.id === targetGroupId);
+    const insertIdx = targetIdx === -1 ? withoutMoved.length : targetIdx;
+    withoutMoved.splice(insertIdx, 0, movingGroup);
+    persistGroupOrder(withoutMoved);
 }
