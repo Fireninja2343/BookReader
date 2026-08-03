@@ -374,30 +374,35 @@ function saveAndApplyUserStyles() {
     frame.style.lineHeight = lineSpacing;
 
     // --- APPLY PARAGRAPH SPACING OVERRIDES ---
-    // Inject bottom margin padding values dynamically into all internal paragraphs
-    frame.querySelectorAll("p, div, blockquote").forEach(el => {
-        // If the element contains substantive text blocks, give it vertical whitespace
+    // Inject bottom margin padding values dynamically into paragraphs (skipping the banner)
+    frame.querySelectorAll("p, div:not(#chapter-end-action-banner), blockquote").forEach(el => {
+        // Skip elements inside the end banner entirely
+        if (el.closest("#chapter-end-action-banner")) return;
+
         if (el.textContent.trim().length > 0) {
             el.style.marginBottom = `${paragraphSpacing}em`;
-            el.style.marginTop = "0px"; // Normalizes layout flow tracking direction
+            el.style.marginTop = "0px";
         }
     });
     // ------------------------------------------
 
     // --- SAFE OVERRIDE COLOR CHECK CODES ---
+    // Target all elements EXCEPT the chapter end banner and its contents
+    const targetElements = frame.querySelectorAll("*:not(#chapter-end-action-banner):not(#chapter-end-action-banner *)");
+
     if (colorOverrideEnabled) {
         frame.style.color = color;
-        frame.querySelectorAll("*").forEach(el => el.style.color = "inherit");
+        targetElements.forEach(el => el.style.color = "inherit");
     } else {
         frame.style.removeProperty("color");
-        frame.querySelectorAll("*").forEach(el => el.style.removeProperty("color"));
+        targetElements.forEach(el => el.style.removeProperty("color"));
     }
 
     if (font === "publisher") {
         frame.style.fontFamily = "initial";
     } else {
         frame.style.fontFamily = font;
-        frame.querySelectorAll("*").forEach(el => el.style.fontFamily = "inherit");
+        targetElements.forEach(el => el.style.fontFamily = "inherit");
     }
 }
 
