@@ -4,18 +4,41 @@
 window.addEventListener("focus", startActiveReadingTimer);
 window.addEventListener("blur", stopActiveReadingTimer);
 
+// Hoisted above the visibilitychange listener below, since that listener now needs it
+// on every hide/show pair rather than only inside checkSessionInactivityTimeout() further down.
+const SESSION_INACTIVITY_TIMEOUT_MS = Config.Reading.SESSION_INACTIVITY_TIMEOUT_MS;
+
 /*
  focus/blur alone are the weaker signal for "is this tab actually the one being looked at"
  some window-manager / devtools / PWA window-switching cases don't fire them reliably.
  The Page Visibility API's hidden/visible state is the API actually meant for this and fires more consistently,
  so it's layered on top as a second, more reliable check covering the same "tab is selected" requirement.
 */
+// Timestamp of the most recent hide, used below to tell a brief tab switch apart from a real
+// break: null whenever the tab isn't currently hidden.
+let hiddenAt = null;
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
         stopActiveReadingTimer();
         saveTimeToDB(); // Flush the exact trailing seconds before the tab goes away
-        endReadingSession("hidden"); // Backgrounding the tab ends the current session - see definition below
+        hiddenAt = Date.now();
+        /*
+        No endReadingSession() call here anymore: ending the session on every hide meant
+        switching tabs for even a few seconds fragmented one continuous sitting into several
+        short session records, each independently vulnerable to being misjudged as noise.
+        Instead, the decision is deferred to the visible branch below, based on how long the
+        tab was actually away - a short switch resumes the same session, only a gap past
+        SESSION_INACTIVITY_TIMEOUT_MS is treated as a real break.
+        */
     } else if (document.hasFocus()) {
+        if (hiddenAt !== null) {
+            const awayMs = Date.now() - hiddenAt;
+            if (awayMs >= SESSION_INACTIVITY_TIMEOUT_MS) {
+                endReadingSession("hidden-timeout"); // Away long enough to count as a real break
+            }
+            // Else: away only briefly, so the current session just continues uninterrupted
+            hiddenAt = null;
+        }
         startActiveReadingTimer();
     }
 });
@@ -25,7 +48,7 @@ document.addEventListener("visibilitychange", () => {
 // this covers the close-outright case that visibilitychange isn't guaranteed to catch.
 window.addEventListener("beforeunload", () => {
     saveTimeToDB();
-    endReadingSession("unload");
+    endReadingSession("unload"); // Tab is actually closing, so there's nothing to resume - always end the session here
 });
 
 const IDLE_THRESHOLD_MS = Config.Sync.IDLE_THRESHOLD_MS;
@@ -135,14 +158,17 @@ function saveTimeToDB() {
 /*
  REAL READING-SESSION LIFECYCLE ENGINE
 
- Separate from recordReadingSessionStart() which only counts reader launches
- for compatibility. This tracks actual engaged reading activity.
+ Separate from recordReadingSessionStart() (02-db.js), which only updates
+ firstOpened/lastOpened on launch. This tracks actual engaged reading
+ activity, appending to readingSessions and incrementing totalSessions
+ only once a session is judged real - see appendReadingSession() in 02-db.js.
 
  Sessions start on first interaction, continue while activity stays within
  the timeout window, and end on close, tab exit, or inactivity timeout,
- saving through appendReadingSession().
+ saving through appendReadingSession(). SESSION_INACTIVITY_TIMEOUT_MS is
+ declared near the top of the file, alongside the visibilitychange listener
+ that also needs it.
 */
-const SESSION_INACTIVITY_TIMEOUT_MS = Config.Reading.SESSION_INACTIVITY_TIMEOUT_MS;
 
 // Starts a session on first interaction or extends the active session clock.
 // No-op when the reader is inactive, another view is open, or no book is loaded.
@@ -540,9 +566,10 @@ function submitEditRawDataModalForm() {
         record.totalWords = totalWords;
         record.chapterCount = chapterCount;
         record.isRead = isReadChecked;
-        // Clears completedDate if the book was manually un-marked as read, 
-        // mirroring the same rule the "Toggle Read Status" action already applies,
-        // so this modal can't leave a completedDate stranded on a book that's no longer marked as read.
+        // Clears completedDate if the book was manually un-marked as read,
+        // mirroring the same rule the "Toggle Read Status" action already
+        // applies, so this modal can't leave a completedDate stranded on a
+        // book that's no longer marked as read.
         if (!isReadChecked) {
             record.completedDate = null;
         } else if (!record.completedDate) {

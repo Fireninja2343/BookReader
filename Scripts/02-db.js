@@ -110,6 +110,11 @@ function saveBookToDatabase(title, coverData, binaryData, analysisMeta = {}) {
       totalPages: analysisMeta.totalPages ?? null,
       totalWords: analysisMeta.totalWords ?? null,
       chapterCount: analysisMeta.chapterCount ?? null,
+      /* Per-chapter word counts, used by trackReadingProgress() (10-reader-controls.js) to weight
+         each chapter's share of whole-book progress by its actual size instead of splitting
+         progress evenly across chapters. Same null-until-backfilled treatment as the three
+         fields above: see ensureBookMetadataCached() in 07-epub-parser.js. */
+      chapterWordCounts: analysisMeta.chapterWordCounts ?? null,
       /* Reading-history fields, updated as the book is actually read: see
          recordReadingSessionStart() below and markBookAsRead(). */
       firstOpened: null,
@@ -370,11 +375,12 @@ function setBookStartDate(bookId, firstOpenedValue) {
 }
 
 /*
- Called once per reader launch, where each visit counts as a new session.
+ Called once per reader launch, where each visit opens a new potential session.
 
- firstOpened is only set once, while lastOpened and totalSessions update on
- every open. totalSessions remains launch-based for compatibility; actual
- engaged-reading sessions are tracked separately through readingSessions.
+ firstOpened is only set once, while lastOpened updates on every open.
+ totalSessions is NOT touched here: it only increments once a session is judged real
+ by appendReadingSession() below, so a quick peek that never becomes a real session
+ doesn't inflate the count.
 */
 function recordReadingSessionStart(bookId) {
   if (!bookId || !db) return;
@@ -386,13 +392,11 @@ function recordReadingSessionStart(bookId) {
       const now = new Date().getTime();
       if (!record.firstOpened) record.firstOpened = now;
       record.lastOpened = now;
-      record.totalSessions = (record.totalSessions || 0) + 1;
       record.lastModified = now;
       store.put(record);
       if (activeBookObject && activeBookObject.id === bookId) {
         activeBookObject.firstOpened = record.firstOpened;
         activeBookObject.lastOpened = record.lastOpened;
-        activeBookObject.totalSessions = record.totalSessions;
       }
       if (typeof pushBookMetadataToCloud === "function") {
         pushBookMetadataToCloud(record);
@@ -402,30 +406,30 @@ function recordReadingSessionStart(bookId) {
 }
 
 /*
- Appends a completed real reading session to readingSessions and persists
- it. This is used when a session actually ends, unlike recordReadingSessionStart()
- which only tracks launches.
+ Appends a completed real reading session to readingSessions and persists it, incrementing
+ totalSessions alongside it. This is used when a session actually ends, unlike
+ recordReadingSessionStart() which only marks a launch's start.
 
- Trims stored sessions to MAX_STORED_SESSIONS_PER_BOOK and defaults missing
- arrays to [] so older books require no migration.
+ Sessions under 60 seconds are always discarded as noise, since the rate check below isn't
+ meaningful at that scale (a couple pages turned in a few seconds can imply an
+ implausible-looking rate even during genuine reading). Sessions at or above 60 seconds are
+ judged on their implied pages-per-hour rate instead: too high implies a progress-bar jump
+ rather than real reading, too low implies a stalled/idle tab rather than genuinely slow
+ reading. See MAX_PLAUSIBLE_PAGES_PER_HOUR/MIN_PLAUSIBLE_PAGES_PER_HOUR in 00-config.js.
+
+ Trims stored sessions to MAX_STORED_SESSIONS_PER_BOOK and defaults missing arrays to [] so
+ older books require no migration.
 */
 function appendReadingSession(bookId, sessionRecord) {
   if (!bookId || !db || !sessionRecord) return Promise.resolve(false);
   const duration = sessionRecord.durationSeconds || 0;
   const pages = sessionRecord.pagesRead || 0;
-  if (duration < 60 || pages === 0) {
-    console.log(`[02-db] Discarded noise session (${duration}s, ${pages} pages read)`);
-    // Decrement totalSessions so the launcher count isn't inflated by quick peeks
-    const transaction = db.transaction([STORE_BOOKS], "readwrite");
-    const store = transaction.objectStore(STORE_BOOKS);
-    store.get(bookId).onsuccess = (e) => {
-      const record = e.target.result;
-      if (record && record.totalSessions > 0) {
-        record.totalSessions -= 1;
-        record.lastModified = Date.now();
-        store.put(record);
-      }
-    };
+  const impliedPagesPerHour = duration > 0 ? (pages / (duration / 3600)) : 0;
+  const isNoise = duration < 60
+    || impliedPagesPerHour > Config.Reading.MAX_PLAUSIBLE_PAGES_PER_HOUR
+    || impliedPagesPerHour < Config.Reading.MIN_PLAUSIBLE_PAGES_PER_HOUR;
+  if (isNoise) {
+    console.log(`[02-db] Discarded noise session (${duration}s, ${pages} pages read, ${impliedPagesPerHour.toFixed(1)} p/h)`);
     return Promise.resolve(false);
   }
   return new Promise((resolve) => {
@@ -441,11 +445,13 @@ function appendReadingSession(bookId, sessionRecord) {
         if (record.readingSessions.length > cap) {
           record.readingSessions = record.readingSessions.slice(-cap);
         }
+        record.totalSessions = (record.totalSessions || 0) + 1;
         record.lastModified = new Date().getTime();
         store.put(record);
         updatedRecord = record;
         if (activeBookObject && activeBookObject.id === bookId) {
           activeBookObject.readingSessions = record.readingSessions;
+          activeBookObject.totalSessions = record.totalSessions;
         }
       }
     };

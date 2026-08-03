@@ -104,9 +104,35 @@ function trackReadingProgress() {
     }
 
     // 2. CALCULATE GLOBAL FULL-BOOK METRICS
-    const chapterWeight = 100 / activeSpineArray.length;
-    // Interpolate chapter index location alongside inner percentage weight offsets
-    const bookScalePct = (activeSpinePointer * chapterWeight) + (innerPct * chapterWeight);
+    /*
+    Weights each chapter's contribution to whole-book progress by its actual word count,
+    instead of splitting the book evenly across chapterCount. An evenly-split weighting
+    badly distorts progress for books with several short front-matter/cover chapters before
+    the real content starts: those chapters would count for as much of the "book" as any
+    real chapter, even at a handful of words each. See computeEpubWordStats() in
+    07-epub-parser.js for where chapterWordCounts gets built, and ensureBookMetadataCached()
+    for the one-time backfill on existing books.
+
+    Falls back to the old uniform weighting when chapterWordCounts isn't available yet
+    (not migrated), or its length doesn't match the parsed spine (a mismatch that would
+    otherwise silently misalign chapter indices between the two arrays).
+    */
+    const chapterWordCounts = activeBookObject ? activeBookObject.chapterWordCounts : null;
+    let bookScalePct;
+    if (Array.isArray(chapterWordCounts) && chapterWordCounts.length === activeSpineArray.length) {
+        const totalWeightedWords = chapterWordCounts.reduce((sum, wordCount) => sum + wordCount, 0);
+        // Words in every chapter fully behind the current position, which count in full,
+        // plus the fraction of the current chapter read so far.
+        let wordsReadSoFar = innerPct * (chapterWordCounts[activeSpinePointer] || 0);
+        for (let i = 0; i < activeSpinePointer; i++) {
+            wordsReadSoFar += chapterWordCounts[i];
+        }
+        bookScalePct = totalWeightedWords > 0 ? (wordsReadSoFar / totalWeightedWords) * 100 : 0;
+    } else {
+        const chapterWeight = 100 / activeSpineArray.length;
+        // Interpolate chapter index location alongside inner percentage weight offsets
+        bookScalePct = (activeSpinePointer * chapterWeight) + (innerPct * chapterWeight);
+    }
 
     const totalPctDisplay = document.getElementById("percentage-display");
     const progressFillBar = document.getElementById("progress-indicator-bar");

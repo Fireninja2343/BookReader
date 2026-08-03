@@ -32,6 +32,28 @@ const Config = {
     PAUSED_INACTIVITY_THRESHOLD_MS: 7 * 24 * 60 * 60 * 1000, // Days (*24 -> h *60 -> min *60 -> s *1000 ->ms)
     MIN_MEANINGFUL_TRACKED_SECONDS: 30,
     TRACKING_TICK_MS: 2000,
+    /*
+     Nominal word-count floor for chapters that parse to 0 words (cover pages, pure-image chapters, etc.)
+     when building chapterWordCounts in computeEpubWordStats().
+     Without this floor, a 0-word chapter would have zero weight in the per-chapter-weighted progress calculation in trackReadingProgress(),
+     meaning scrolling through it wouldn't move the whole-book progress percentage at all.
+     Only affects the weighting array; totalWords/totalPages (used for page-count estimates)
+     still accumulate the true, unfloored per-chapter counts.
+    */
+    ZERO_WORD_CHAPTER_FLOOR: 1,
+    /*
+     Pages-per-hour bounds used by appendReadingSession() (02-db.js) to
+     tell a real reading session apart from noise. Sessions implying a rate
+     above MAX are almost certainly a progress-bar jump rather than actual
+     reading; sessions implying a rate below MIN indicate negligible/no
+     real progress despite the tab being open (idle tab, stalled
+     autoscroll, etc.), as opposed to genuinely slow reading, which still
+     clears this floor. Only applied to sessions that already clear the
+     60-second minimum duration - see the comment in appendReadingSession()
+     for why very short sessions skip the rate check entirely.
+    */
+    MAX_PLAUSIBLE_PAGES_PER_HOUR: 500,
+    MIN_PLAUSIBLE_PAGES_PER_HOUR: 10,
   },
   firebaseConfig: {
     apiKey: "AIzaSyB-lHa5mHi-iMdgGaTe5ehFZE1Xf2T8TkQ",
