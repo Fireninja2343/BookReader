@@ -430,11 +430,8 @@ function sortLibrary() {
     loadedBooksMemory.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   }
 
-  // Re-renders whichever view is currently on screen. Previously this only ever called
-  // renderLibraryGrid(), so changing the sort mode while the stats table was open silently
-  // left it showing the old order until the user left and reopened stats.
   const statsPanel = document.getElementById("stats-view");
-  if (statsPanel && statsPanel.style.display !== "none") {
+  if (statsPanel && getComputedStyle(statsPanel).display !== "none") {
     if (typeof showStatsViewState === "function") showStatsViewState();
   } else {
     renderLibraryGrid();
