@@ -143,14 +143,17 @@ function buildGroupCardContents(card, group) {
  Draws a rounded "bubble" outline around each group's cluster of book cards in the flat
  "All Books" view, only shown while Sort Books by Group Order is active in Manual sort mode
  (see getBooksInDisplayOrder()). Purely visual - it doesn't change card layout or DOM
- structure, just measures where each group's first/last card actually landed after the grid
- laid them out and draws a positioned outline behind them, so it works with whatever
- grid/flex layout the container uses without needing to restructure it into per-group
- wrapper elements.
+ structure, just measures where each group's cards actually landed after the grid laid
+ them out and draws a positioned outline behind them.
 
- Uses the min/max bounding box across all of a group's cards, so a group whose cards wrap
- across multiple grid rows still gets one continuous outline covering the whole block,
- rather than one outline per row.
+ A group's cards can wrap across multiple rows in arbitrary shapes (e.g. 3 full rows plus
+ a half row, or an L-shape if other groups' cards interleave visually), so a single
+ rectangular bounding box is wrong - it would cover unrelated cards. Instead this clusters
+ the group's cards into rows by their rendered top position, builds one rect per row, then
+ stitches the rows into a single continuous "staircase" polygon (rows are extended to meet
+ exactly at the midpoint of any gap between them) and rounds every vertex of that polygon.
+ This is the same general technique browsers use to draw a rounded highlight behind
+ multi-line wrapped text.
 */
 function renderGroupBubbleOutlines(container) {
   document.querySelectorAll(".group-bubble-outline").forEach((el) => el.remove());
@@ -164,61 +167,146 @@ function renderGroupBubbleOutlines(container) {
   });
   if (groupedBookIds.size === 0) return;
 
+  if (getComputedStyle(container).position === "static") {
+    container.style.position = "relative";
+  }
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.classList.add("group-bubble-outline");
+  svg.setAttribute("width", containerRect.width);
+  svg.setAttribute("height", containerRect.height);
+  svg.setAttribute("viewBox", `0 0 ${containerRect.width} ${containerRect.height}`);
+
+  const padding = 10;
+  const cornerRadius = 24;
+
   getGroupsSortedByPlacement().forEach((group) => {
     const groupBookIds = loadedBooksMemory
       .filter((b) => b.groupId === group.id)
       .map((b) => b.id);
     if (groupBookIds.length === 0) return;
 
-    let minLeft = Infinity, minTop = Infinity, maxRight = -Infinity, maxBottom = -Infinity;
-    groupBookIds.forEach((bookId) => {
-      const card = container.querySelector(`.book-card[data-book-id='${bookId}']`);
-      if (!card) return;
-      const rect = card.getBoundingClientRect();
-      minLeft = Math.min(minLeft, rect.left);
-      minTop = Math.min(minTop, rect.top);
-      maxRight = Math.max(maxRight, rect.right);
-      maxBottom = Math.max(maxBottom, rect.bottom);
-    });
-    if (minLeft === Infinity) return; // None of this group's cards actually rendered
+    const cardRects = groupBookIds
+      .map((bookId) => container.querySelector(`.book-card[data-book-id='${bookId}']`))
+      .filter(Boolean)
+      .map((card) => {
+        const r = card.getBoundingClientRect();
+        return {
+          left: r.left - containerRect.left,
+          right: r.right - containerRect.left,
+          top: r.top - containerRect.top,
+          bottom: r.bottom - containerRect.top,
+        };
+      });
+    if (cardRects.length === 0) return; // None of this group's cards actually rendered
 
-    const outline = document.createElement("div");
-    outline.className = "group-bubble-outline";
-    const padding = 10;
-    outline.style.position = "absolute";
-    outline.style.left = `${minLeft - containerRect.left - padding}px`;
-    outline.style.top = `${minTop - containerRect.top - padding}px`;
-    outline.style.width = `${(maxRight - minLeft) + padding * 2}px`;
-    outline.style.height = `${(maxBottom - minTop) + padding * 2}px`;
-    outline.style.pointerEvents = "none";
-    // Outlines are appended after all the cards already in the DOM, which would normally
-    // paint them on top; a negative z-index (paired with position: relative on the cards
-    // themselves, set below) keeps them behind the cards instead.
-    outline.style.zIndex = "-1";
-    // Bubble-letter-style rounding: a large border-radius relative to the outline's own
-    // size reads as soft/modular rather than a plain rectangle, without needing an SVG.
-    outline.style.borderRadius = "24px";
-    outline.style.border = `2px solid ${group.backgroundColor}`;
-    outline.style.setProperty(
-      "background-color",
-      `color-mix(in srgb, ${group.backgroundColor} 8%, transparent)`,
-    );
-    container.appendChild(outline);
+    const rows = clusterCardsIntoRows(cardRects, padding);
+    const pathData = buildRowStaircasePath(rows, cornerRadius);
+    if (!pathData) return;
+
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", pathData);
+    path.setAttribute("fill", `color-mix(in srgb, ${group.backgroundColor} 8%, transparent)`);
+    path.setAttribute("stroke", group.backgroundColor);
+    path.setAttribute("stroke-width", "2");
+    svg.appendChild(path);
   });
 
-  if (getComputedStyle(container).position === "static") {
-    container.style.position = "relative";
-  }
-  // A negative-z-index sibling only renders behind elements that establish their own
-  // stacking context; without position set on the cards, they'd fall back to the
-  // container's stacking context and could still end up behind the (also-a-sibling)
-  // outline in some browsers. Forcing position: relative on each card guarantees it
-  // paints above the outline regardless.
-  container.querySelectorAll(".book-card").forEach((card) => {
-    if (getComputedStyle(card).position === "static") {
-      card.style.position = "relative";
+  // Inserted as the FIRST child (not appended) so plain DOM paint order puts it behind
+  // every book card, without relying on z-index / stacking-context tricks that can fail
+  // depending on what stacking context the container itself ends up establishing.
+  container.insertBefore(svg, container.firstChild);
+}
+
+// Groups a flat list of card rects into visual rows (cards whose tops are close together),
+// then pads each row and stretches adjacent rows to meet exactly at the midpoint of any
+// gap between them, so the rows form one seamless vertical stack with no visual gaps.
+function clusterCardsIntoRows(cardRects, padding) {
+  const ROW_TOLERANCE_PX = 10; // cards in the same visual row should have nearly-identical tops
+  const sorted = [...cardRects].sort((a, b) => a.top - b.top);
+  const rows = [];
+  sorted.forEach((r) => {
+    let row = rows.find((row) => Math.abs(row.top - r.top) < ROW_TOLERANCE_PX);
+    if (!row) {
+      row = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+      rows.push(row);
+    } else {
+      row.top = Math.min(row.top, r.top);
+      row.bottom = Math.max(row.bottom, r.bottom);
+      row.left = Math.min(row.left, r.left);
+      row.right = Math.max(row.right, r.right);
     }
   });
+  rows.sort((a, b) => a.top - b.top);
+
+  rows.forEach((row) => {
+    row.left -= padding;
+    row.right += padding;
+    row.top -= padding;
+    row.bottom += padding;
+  });
+  for (let i = 0; i < rows.length - 1; i++) {
+    const boundary = (rows[i].bottom + rows[i + 1].top) / 2;
+    rows[i].bottom = boundary;
+    rows[i + 1].top = boundary;
+  }
+  return rows;
+}
+
+// Builds an SVG path tracing the outline of a vertically-stacked set of row rects (each
+// row possibly a different width), producing a "staircase" polygon rather than a single
+// bounding rectangle, with every corner (convex or concave) rounded.
+function buildRowStaircasePath(rows, radius) {
+  if (rows.length === 0) return "";
+
+  const rightPts = [];
+  rows.forEach((row) => {
+    rightPts.push({ x: row.right, y: row.top });
+    rightPts.push({ x: row.right, y: row.bottom });
+  });
+  const leftPts = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    leftPts.push({ x: row.left, y: row.bottom });
+    leftPts.push({ x: row.left, y: row.top });
+  }
+
+  return roundedPolygonPath([...rightPts, ...leftPts], radius);
+}
+
+// Generic rounded-corner polygon path builder: given an ordered, closed list of vertices,
+// cuts each corner in by min(radius, half the shorter adjacent edge) and rounds it with a
+// quadratic curve through the original vertex. Works uniformly for convex and concave
+// corners, which is what lets the staircase shape above look like one soft continuous
+// bubble instead of a jagged outline.
+function roundedPolygonPath(points, radius) {
+  const deduped = points.filter((p, i) => {
+    const prev = points[(i - 1 + points.length) % points.length];
+    return !(p.x === prev.x && p.y === prev.y);
+  });
+  const n = deduped.length;
+  if (n < 3) return "";
+
+  let d = "";
+  for (let i = 0; i < n; i++) {
+    const prev = deduped[(i - 1 + n) % n];
+    const curr = deduped[i];
+    const next = deduped[(i + 1) % n];
+
+    const toPrev = { x: prev.x - curr.x, y: prev.y - curr.y };
+    const toNext = { x: next.x - curr.x, y: next.y - curr.y };
+    const lenPrev = Math.hypot(toPrev.x, toPrev.y);
+    const lenNext = Math.hypot(toNext.x, toNext.y);
+    const r = Math.min(radius, lenPrev / 2, lenNext / 2);
+
+    const startPt = { x: curr.x + (toPrev.x / lenPrev) * r, y: curr.y + (toPrev.y / lenPrev) * r };
+    const endPt = { x: curr.x + (toNext.x / lenNext) * r, y: curr.y + (toNext.y / lenNext) * r };
+
+    d += (i === 0 ? `M ${startPt.x} ${startPt.y} ` : `L ${startPt.x} ${startPt.y} `);
+    d += `Q ${curr.x} ${curr.y} ${endPt.x} ${endPt.y} `;
+  }
+  return d + "Z";
 }
 
 // Sub-routine utility helper to pack structural card wrappers on the grid DOM

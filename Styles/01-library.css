@@ -88,6 +88,12 @@
     color: var(--text-muted);
 }
 
+.group-bubble-outline {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
 /* Un-truncated Grid Book Title Formatting layout handles */
 .book-title {
     margin-top: 10px;
