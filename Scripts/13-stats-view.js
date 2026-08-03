@@ -624,7 +624,15 @@ async function showStatsViewState() {
             pagesRead = totalPages;
             wordsRead = totalWords;
         } else if (book.currentChapter > 0 || book.scrollOffset > 100) {
-            const progress = book.currentChapter / Math.max(1, chapterCount);
+            const chapterWordCounts = book.chapterWordCounts;
+            let progress;
+            if (Array.isArray(chapterWordCounts) && chapterWordCounts.length === chapterCount && totalWords > 0) {
+                let wordsBefore = 0;
+                for (let i = 0; i < book.currentChapter && i < chapterWordCounts.length; i++) wordsBefore += chapterWordCounts[i];
+                progress = wordsBefore / totalWords;
+            } else {
+                progress = book.currentChapter / Math.max(1, chapterCount);
+            }
             pagesRead = Math.round(progress * totalPages);
             wordsRead = Math.round(progress * totalWords);
         } else {

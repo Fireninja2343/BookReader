@@ -12,18 +12,39 @@ function renderProgressBarTicks() {
     segmentContainer.innerHTML = "";
     if (activeSpineArray.length === 0) return;
 
-    const segmentWidth = 100 / activeSpineArray.length;
-
     /*
-     Creates one hoverable segment per chapter, sized by its share of the bar.
-     Segments sit beneath tick separators and provide hover tooltips using titles
-     from activeChapterTitles, populated by parseAndRenderTOC().
+    Tick/segment positions must use the same weighting as trackReadingProgress()'s
+    fill bar, or the fill and the chapter boundaries disagree - the fill can
+    visually land in the middle of the "wrong" chapter's segment. Falls back to
+    uniform widths under the same condition trackReadingProgress() does (missing
+    or mismatched chapterWordCounts).
     */
+    const chapterWordCounts = activeBookObject ? activeBookObject.chapterWordCounts : null;
+    const useWeighted = Array.isArray(chapterWordCounts) && chapterWordCounts.length === activeSpineArray.length;
+    const totalWeightedWords = useWeighted ? chapterWordCounts.reduce((sum, w) => sum + w, 0) : 0;
+
+    const positions = [];
+    if (useWeighted && totalWeightedWords > 0) {
+        let cumulative = 0;
+        for (let i = 0; i < chapterWordCounts.length; i++) {
+            positions.push({
+                startPct: (cumulative / totalWeightedWords) * 100,
+                widthPct: (chapterWordCounts[i] / totalWeightedWords) * 100,
+            });
+            cumulative += chapterWordCounts[i];
+        }
+    } else {
+        const widthPct = 100 / activeSpineArray.length;
+        for (let i = 0; i < activeSpineArray.length; i++) {
+            positions.push({ startPct: widthPct * i, widthPct });
+        }
+    }
+
     for (let i = 0; i < activeSpineArray.length; i++) {
         const segment = document.createElement("div");
         segment.className = "chapter-segment";
-        segment.style.left = `${segmentWidth * i}%`;
-        segment.style.width = `${segmentWidth}%`;
+        segment.style.left = `${positions[i].startPct}%`;
+        segment.style.width = `${positions[i].widthPct}%`;
 
         const tooltip = document.createElement("div");
         tooltip.className = "chapter-segment-tooltip";
@@ -33,12 +54,11 @@ function renderProgressBarTicks() {
         segmentContainer.appendChild(segment);
     }
 
-    // Thin divider ticks marking each chapter boundary (none needed if there's only one chapter)
     if (activeSpineArray.length > 1) {
         for (let i = 1; i < activeSpineArray.length; i++) {
             const tick = document.createElement("div");
             tick.className = "chapter-tick-marker";
-            tick.style.left = `${segmentWidth * i}%`;
+            tick.style.left = `${positions[i].startPct}%`;
             tickContainer.appendChild(tick);
         }
     }
@@ -50,18 +70,35 @@ function handleProgressBarClick(event) {
     const track = document.getElementById("progress-line-track");
     const rect = track.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
-    const widthPercentage = clickX / rect.width;
+    const widthPercentage = Math.min(1, Math.max(0, clickX / rect.width));
 
-    // Direct mathematical interpolation of timeline bounds coordinates
-    const targetSpineFloat = widthPercentage * activeSpineArray.length;
-    let targetChapterIndex = Math.floor(targetSpineFloat);
-    let chapterInnerScrollPercentage = targetSpineFloat - targetChapterIndex;
+    const chapterWordCounts = activeBookObject.chapterWordCounts;
+    const useWeighted = Array.isArray(chapterWordCounts) && chapterWordCounts.length === activeSpineArray.length;
 
-    // Bounds clamps validations routines
-    if (targetChapterIndex >= activeSpineArray.length)
-        targetChapterIndex = activeSpineArray.length - 1;
-    if (targetChapterIndex < 0) targetChapterIndex = 0;
+    let targetChapterIndex, chapterInnerScrollPercentage;
 
+    if (useWeighted) {
+        const totalWeightedWords = chapterWordCounts.reduce((sum, w) => sum + w, 0);
+        const targetWords = widthPercentage * totalWeightedWords;
+        let cumulative = 0;
+        targetChapterIndex = chapterWordCounts.length - 1;
+        chapterInnerScrollPercentage = 1;
+        for (let i = 0; i < chapterWordCounts.length; i++) {
+            const chapterWords = chapterWordCounts[i];
+            if (targetWords < cumulative + chapterWords) {
+                targetChapterIndex = i;
+                chapterInnerScrollPercentage = chapterWords > 0 ? (targetWords - cumulative) / chapterWords : 0;
+                break;
+            }
+            cumulative += chapterWords;
+        }
+    } else {
+        const targetSpineFloat = widthPercentage * activeSpineArray.length;
+        targetChapterIndex = Math.floor(targetSpineFloat);
+        chapterInnerScrollPercentage = targetSpineFloat - targetChapterIndex;
+    }
+
+    targetChapterIndex = Math.max(0, Math.min(targetChapterIndex, activeSpineArray.length - 1));
     activeSpinePointer = targetChapterIndex;
 
     renderActiveChapterFromZip(activeZipInstance).then(() => {
@@ -103,8 +140,7 @@ function trackReadingProgress() {
         chapterPctDisplay.innerText = `${chapterProgressPercentage}%`;
     }
 
-    // 2. CALCULATE GLOBAL FULL-BOOK METRICS
-    /*
+    /* 2. CALCULATE GLOBAL FULL-BOOK METRICS
     Weights each chapter's contribution to whole-book progress by its actual word count,
     instead of splitting the book evenly across chapterCount. An evenly-split weighting
     badly distorts progress for books with several short front-matter/cover chapters before
