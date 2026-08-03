@@ -12,13 +12,18 @@ function renderProgressBarTicks() {
     segmentContainer.innerHTML = "";
     if (activeSpineArray.length === 0) return;
 
-    const boundaries = computeChapterBoundaryPercents();
+    const segmentWidth = 100 / activeSpineArray.length;
 
+    /*
+     Creates one hoverable segment per chapter, sized by its share of the bar.
+     Segments sit beneath tick separators and provide hover tooltips using titles
+     from activeChapterTitles, populated by parseAndRenderTOC().
+    */
     for (let i = 0; i < activeSpineArray.length; i++) {
         const segment = document.createElement("div");
         segment.className = "chapter-segment";
-        segment.style.left = `${boundaries[i]}%`;
-        segment.style.width = `${boundaries[i + 1] - boundaries[i]}%`;
+        segment.style.left = `${segmentWidth * i}%`;
+        segment.style.width = `${segmentWidth}%`;
 
         const tooltip = document.createElement("div");
         tooltip.className = "chapter-segment-tooltip";
@@ -28,11 +33,12 @@ function renderProgressBarTicks() {
         segmentContainer.appendChild(segment);
     }
 
+    // Thin divider ticks marking each chapter boundary (none needed if there's only one chapter)
     if (activeSpineArray.length > 1) {
         for (let i = 1; i < activeSpineArray.length; i++) {
             const tick = document.createElement("div");
             tick.className = "chapter-tick-marker";
-            tick.style.left = `${boundaries[i]}%`;
+            tick.style.left = `${segmentWidth * i}%`;
             tickContainer.appendChild(tick);
         }
     }
@@ -44,23 +50,17 @@ function handleProgressBarClick(event) {
     const track = document.getElementById("progress-line-track");
     const rect = track.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
-    const targetPct = Math.min(100, Math.max(0, (clickX / rect.width) * 100));
+    const widthPercentage = clickX / rect.width;
 
-    const boundaries = computeChapterBoundaryPercents();
+    // Direct mathematical interpolation of timeline bounds coordinates
+    const targetSpineFloat = widthPercentage * activeSpineArray.length;
+    let targetChapterIndex = Math.floor(targetSpineFloat);
+    let chapterInnerScrollPercentage = targetSpineFloat - targetChapterIndex;
 
-    let targetChapterIndex = activeSpineArray.length - 1;
-    for (let i = 0; i < activeSpineArray.length; i++) {
-        if (targetPct < boundaries[i + 1] || i === activeSpineArray.length - 1) {
-            targetChapterIndex = i;
-            break;
-        }
-    }
-
-    const chapterStart = boundaries[targetChapterIndex];
-    const chapterEnd = boundaries[targetChapterIndex + 1];
-    const chapterInnerScrollPercentage = chapterEnd > chapterStart
-        ? (targetPct - chapterStart) / (chapterEnd - chapterStart)
-        : 0;
+    // Bounds clamps validations routines
+    if (targetChapterIndex >= activeSpineArray.length)
+        targetChapterIndex = activeSpineArray.length - 1;
+    if (targetChapterIndex < 0) targetChapterIndex = 0;
 
     activeSpinePointer = targetChapterIndex;
 
@@ -72,94 +72,6 @@ function handleProgressBarClick(event) {
             trackReadingProgress();
         }, 180);
     });
-}
-
-/*
-Word-weighted chapter boundary percentages (0-100), with a minimum enforced
-gap between adjacent boundaries so clusters of tiny front/back-matter
-chapters don't collapse into a single unreadable, unclickable point.
-
-boundaries[0] is always 0, boundaries[n] is always 100; boundaries[i] for
-0 < i < n is the tick position between chapter i-1 and chapter i.
-
-This is the single source of truth for the fill bar, the tick marks, AND
-click-to-chapter mapping - all three must read from the exact same
-boundaries or they'll visually disagree with each other.
-*/
-function computeChapterBoundaryPercents() {
-    const n = activeSpineArray.length;
-    const boundaries = new Array(n + 1).fill(0);
-    boundaries[n] = 100;
-    if (n === 0) return boundaries;
-
-    const chapterWordCounts = activeBookObject ? activeBookObject.chapterWordCounts : null;
-    const useWeighted = Array.isArray(chapterWordCounts) && chapterWordCounts.length === n;
-
-    // Raw, word-weighted gap (% of the whole bar) per chapter. Falls back to
-    // uniform gaps under the same condition trackReadingProgress() used to.
-    let rawGaps;
-    if (useWeighted) {
-        const totalWords = chapterWordCounts.reduce((sum, w) => sum + w, 0);
-        rawGaps = totalWords > 0
-            ? chapterWordCounts.map((w) => (w / totalWords) * 100)
-            : new Array(n).fill(100 / n);
-    } else {
-        rawGaps = new Array(n).fill(100 / n);
-    }
-
-    // Minimum visual gap, derived from the actual rendered bar width so it
-    // stays correct across screen sizes instead of being a fixed % guess.
-    const track = document.getElementById("progress-line-track");
-    const trackWidthPx = track ? track.getBoundingClientRect().width : 0;
-    const MIN_GAP_PX = Config.Miscellaneous.MIN_CHAPTER_TICK_GAP_PX || 4; // ~2x a thin tick marker
-    const minGapPct = trackWidthPx > 0 ? (MIN_GAP_PX / trackWidthPx) * 100 : 0;
-
-    /* Boost any gap below the minimum up to the minimum, then shrink every
-     gap ABOVE the minimum proportionally to its own headroom above the minimum, to absorb exactly what was added.
-     So tiny clustered chapters spread out to a legible width, and every other chapter gives up a
-     little of its own space roughly in proportion to how much it can spare
-     rather than the adjustment dumping entirely onto whichever chapter happens to come right after the cluster. */
-    const flooredIdx = [];
-    const headroomIdx = [];
-    let excess = 0;
-    let shrinkPool = 0;
-    rawGaps.forEach((g, i) => {
-        if (g < minGapPct) {
-            flooredIdx.push(i);
-            excess += minGapPct - g;
-        } else {
-            headroomIdx.push(i);
-            shrinkPool += g - minGapPct;
-        }
-    });
-
-    const adjustedGaps = rawGaps.slice();
-    flooredIdx.forEach((i) => { adjustedGaps[i] = minGapPct; });
-
-    if (excess > 0) {
-        if (shrinkPool >= excess) {
-            headroomIdx.forEach((i) => {
-                const share = (rawGaps[i] - minGapPct) / shrinkPool;
-                adjustedGaps[i] = rawGaps[i] - excess * share;
-            });
-        } else {
-            /*
-            Pathological case: even zeroing every non-floored chapter down to the minimum wouldn't free enough room
-            (minimum gap unreasonably large relative to chapter count / bar width).
-            Falls back to plain uniform spacing rather than producing a distorted layout.
-            */
-            for (let i = 0; i <= n; i++) boundaries[i] = (100 / n) * i;
-            return boundaries;
-        }
-    }
-
-    let cumulative = 0;
-    for (let i = 0; i < n; i++) {
-        boundaries[i] = cumulative;
-        cumulative += adjustedGaps[i];
-    }
-    boundaries[n] = 100;
-    return boundaries;
 }
 
 function trackReadingProgress() {
@@ -191,15 +103,36 @@ function trackReadingProgress() {
         chapterPctDisplay.innerText = `${chapterProgressPercentage}%`;
     }
 
-    /* 2. CALCULATE GLOBAL FULL-BOOK METRICS
-    bookScalePct comes from the same boundary positions the progress bar's ticks and click handling use
-    (computeChapterBoundaryPercents(), further down this file), instead of recomputing word-weighting independently here.
-    That helper already covers: falling back to uniform weighting when chapterWordCounts is missing or its length doesn't match the spine,
-    enforcing a minimum visual gap between chapter ticks, and falling back further to plain uniform spacing if even that minimum gap isn't feasible.
-    Keeping the fill bar on the exact same boundaries as the ticks means the fill can never visually disagree with where the ticks say each chapter starts.
+    // 2. CALCULATE GLOBAL FULL-BOOK METRICS
+    /*
+    Weights each chapter's contribution to whole-book progress by its actual word count,
+    instead of splitting the book evenly across chapterCount. An evenly-split weighting
+    badly distorts progress for books with several short front-matter/cover chapters before
+    the real content starts: those chapters would count for as much of the "book" as any
+    real chapter, even at a handful of words each. See computeEpubWordStats() in
+    07-epub-parser.js for where chapterWordCounts gets built, and ensureBookMetadataCached()
+    for the one-time backfill on existing books.
+
+    Falls back to the old uniform weighting when chapterWordCounts isn't available yet
+    (not migrated), or its length doesn't match the parsed spine (a mismatch that would
+    otherwise silently misalign chapter indices between the two arrays).
     */
-    const chapterBoundaries = computeChapterBoundaryPercents();
-    const bookScalePct = chapterBoundaries[activeSpinePointer] + innerPct * (chapterBoundaries[activeSpinePointer + 1] - chapterBoundaries[activeSpinePointer]);
+    const chapterWordCounts = activeBookObject ? activeBookObject.chapterWordCounts : null;
+    let bookScalePct;
+    if (Array.isArray(chapterWordCounts) && chapterWordCounts.length === activeSpineArray.length) {
+        const totalWeightedWords = chapterWordCounts.reduce((sum, wordCount) => sum + wordCount, 0);
+        // Words in every chapter fully behind the current position, which count in full,
+        // plus the fraction of the current chapter read so far.
+        let wordsReadSoFar = innerPct * (chapterWordCounts[activeSpinePointer] || 0);
+        for (let i = 0; i < activeSpinePointer; i++) {
+            wordsReadSoFar += chapterWordCounts[i];
+        }
+        bookScalePct = totalWeightedWords > 0 ? (wordsReadSoFar / totalWeightedWords) * 100 : 0;
+    } else {
+        const chapterWeight = 100 / activeSpineArray.length;
+        // Interpolate chapter index location alongside inner percentage weight offsets
+        bookScalePct = (activeSpinePointer * chapterWeight) + (innerPct * chapterWeight);
+    }
 
     const totalPctDisplay = document.getElementById("percentage-display");
     const progressFillBar = document.getElementById("progress-indicator-bar");
@@ -316,6 +249,15 @@ function loadSavedUserInterfaceSettings() {
             }
         }
 
+        // Restore the Sort Books by Group Order checkbox. Only sets the checkbox state here -
+        // loadedBooksMemory/loadedGroupsMemory aren't populated yet at this point in startup
+        // (fetchLocalLibrary() hasn't resolved), so the setting takes visible effect the first
+        // time renderLibraryGrid()/showStatsViewState() run once data actually loads, not here.
+        const groupOrderedSortingCheckbox = document.getElementById("setting-group-ordered-sorting");
+        if (groupOrderedSortingCheckbox) {
+            groupOrderedSortingCheckbox.checked = !!config.groupOrderedSorting;
+        }
+
         // Hydrate which optional reader header buttons the user has hidden
         if (config.hiddenReaderButtons) {
             Object.keys(READER_BUTTON_ELEMENT_MAP).forEach((key) => {
@@ -405,35 +347,30 @@ function saveAndApplyUserStyles() {
     frame.style.lineHeight = lineSpacing;
 
     // --- APPLY PARAGRAPH SPACING OVERRIDES ---
-    // Inject bottom margin padding values dynamically into paragraphs (skipping the banner)
-    frame.querySelectorAll("p, div:not(#chapter-end-action-banner), blockquote").forEach(el => {
-        // Skip elements inside the end banner entirely
-        if (el.closest("#chapter-end-action-banner")) return;
-
+    // Inject bottom margin padding values dynamically into all internal paragraphs
+    frame.querySelectorAll("p, div, blockquote").forEach(el => {
+        // If the element contains substantive text blocks, give it vertical whitespace
         if (el.textContent.trim().length > 0) {
             el.style.marginBottom = `${paragraphSpacing}em`;
-            el.style.marginTop = "0px";
+            el.style.marginTop = "0px"; // Normalizes layout flow tracking direction
         }
     });
     // ------------------------------------------
 
     // --- SAFE OVERRIDE COLOR CHECK CODES ---
-    // Target all elements EXCEPT the chapter end banner and its contents
-    const targetElements = frame.querySelectorAll("*:not(#chapter-end-action-banner):not(#chapter-end-action-banner *)");
-
     if (colorOverrideEnabled) {
         frame.style.color = color;
-        targetElements.forEach(el => el.style.color = "inherit");
+        frame.querySelectorAll("*").forEach(el => el.style.color = "inherit");
     } else {
         frame.style.removeProperty("color");
-        targetElements.forEach(el => el.style.removeProperty("color"));
+        frame.querySelectorAll("*").forEach(el => el.style.removeProperty("color"));
     }
 
     if (font === "publisher") {
         frame.style.fontFamily = "initial";
     } else {
         frame.style.fontFamily = font;
-        targetElements.forEach(el => el.style.fontFamily = "inherit");
+        frame.querySelectorAll("*").forEach(el => el.style.fontFamily = "inherit");
     }
 }
 

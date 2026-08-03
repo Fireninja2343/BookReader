@@ -303,6 +303,13 @@
                 <label>Book Card Scale Dimension (<span id="lbl-card-size">160</span>px)</label>
                 <input type="range" id="setting-card-size" min="100" max="260" value="160" oninput="applyLibraryInterfaceSettings()" />
             </div>
+            <div class="control-item">
+                <div class="flex-gap8">
+                    <input type="checkbox" id="setting-group-ordered-sorting" onchange="applyLibraryInterfaceSettings()">
+                    <label for="setting-group-ordered-sorting">Sort Books by Group Order</label>
+                </div>
+                <span class="hint-text">In "All Books" view and stats, list books group-by-group. Only applies while sorting Manually</span>
+            </div>
         </div>
 
         <div id="reader-settings-section">

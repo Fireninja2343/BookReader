@@ -9,6 +9,9 @@ function renderLibraryGrid() {
 
   // SCENARIO 1: VIEW GROUPS AND UNASSIGNED SECTIONS (DEFAULT HIERARCHY)
   if (globalLibraryViewMode === "grouped" && activeGroupFilterId === null) {
+    // Render Group Folders First, ordered by sortOrder so drag-and-drop/placement-number
+    // reordering (see 03-groups.js) is actually reflected on screen instead of groups
+    // always appearing in raw fetch order.
     const sortedGroups = getGroupsSortedByPlacement();
     sortedGroups.forEach((group) => {
       const card = document.createElement("div");
@@ -66,7 +69,11 @@ function renderLibraryGrid() {
 
     // SCENARIO 3: FLAT GLOBAL LISTING - ALL BOOKS DISPLAYED REGARDLESS OF GROUPS
   } else if (globalLibraryViewMode === "all") {
-    buildBookCardsInLayout(loadedBooksMemory, container);
+    buildBookCardsInLayout(getBooksInDisplayOrder(), container);
+    if (document.getElementById("setting-group-ordered-sorting")?.checked
+        && document.getElementById("sort-selector")?.value === "manual") {
+      renderGroupBubbleOutlines(container);
+    }
   }
 }
 
@@ -130,6 +137,88 @@ function buildGroupCardContents(card, group) {
 
   card.appendChild(previewGrid);
   card.appendChild(metaContainer);
+}
+
+/*
+ Draws a rounded "bubble" outline around each group's cluster of book cards in the flat
+ "All Books" view, only shown while Sort Books by Group Order is active in Manual sort mode
+ (see getBooksInDisplayOrder()). Purely visual - it doesn't change card layout or DOM
+ structure, just measures where each group's first/last card actually landed after the grid
+ laid them out and draws a positioned outline behind them, so it works with whatever
+ grid/flex layout the container uses without needing to restructure it into per-group
+ wrapper elements.
+
+ Uses the min/max bounding box across all of a group's cards, so a group whose cards wrap
+ across multiple grid rows still gets one continuous outline covering the whole block,
+ rather than one outline per row.
+*/
+function renderGroupBubbleOutlines(container) {
+  document.querySelectorAll(".group-bubble-outline").forEach((el) => el.remove());
+
+  const containerRect = container.getBoundingClientRect();
+  const groupedBookIds = new Set();
+  loadedGroupsMemory.forEach((group) => {
+    loadedBooksMemory.forEach((book) => {
+      if (book.groupId === group.id) groupedBookIds.add(book.id);
+    });
+  });
+  if (groupedBookIds.size === 0) return;
+
+  getGroupsSortedByPlacement().forEach((group) => {
+    const groupBookIds = loadedBooksMemory
+      .filter((b) => b.groupId === group.id)
+      .map((b) => b.id);
+    if (groupBookIds.length === 0) return;
+
+    let minLeft = Infinity, minTop = Infinity, maxRight = -Infinity, maxBottom = -Infinity;
+    groupBookIds.forEach((bookId) => {
+      const card = container.querySelector(`.book-card[data-book-id='${bookId}']`);
+      if (!card) return;
+      const rect = card.getBoundingClientRect();
+      minLeft = Math.min(minLeft, rect.left);
+      minTop = Math.min(minTop, rect.top);
+      maxRight = Math.max(maxRight, rect.right);
+      maxBottom = Math.max(maxBottom, rect.bottom);
+    });
+    if (minLeft === Infinity) return; // None of this group's cards actually rendered
+
+    const outline = document.createElement("div");
+    outline.className = "group-bubble-outline";
+    const padding = 10;
+    outline.style.position = "absolute";
+    outline.style.left = `${minLeft - containerRect.left - padding}px`;
+    outline.style.top = `${minTop - containerRect.top - padding}px`;
+    outline.style.width = `${(maxRight - minLeft) + padding * 2}px`;
+    outline.style.height = `${(maxBottom - minTop) + padding * 2}px`;
+    outline.style.pointerEvents = "none";
+    // Outlines are appended after all the cards already in the DOM, which would normally
+    // paint them on top; a negative z-index (paired with position: relative on the cards
+    // themselves, set below) keeps them behind the cards instead.
+    outline.style.zIndex = "-1";
+    // Bubble-letter-style rounding: a large border-radius relative to the outline's own
+    // size reads as soft/modular rather than a plain rectangle, without needing an SVG.
+    outline.style.borderRadius = "24px";
+    outline.style.border = `2px solid ${group.backgroundColor}`;
+    outline.style.setProperty(
+      "background-color",
+      `color-mix(in srgb, ${group.backgroundColor} 8%, transparent)`,
+    );
+    container.appendChild(outline);
+  });
+
+  if (getComputedStyle(container).position === "static") {
+    container.style.position = "relative";
+  }
+  // A negative-z-index sibling only renders behind elements that establish their own
+  // stacking context; without position set on the cards, they'd fall back to the
+  // container's stacking context and could still end up behind the (also-a-sibling)
+  // outline in some browsers. Forcing position: relative on each card guarantees it
+  // paints above the outline regardless.
+  container.querySelectorAll(".book-card").forEach((card) => {
+    if (getComputedStyle(card).position === "static") {
+      card.style.position = "relative";
+    }
+  });
 }
 
 // Sub-routine utility helper to pack structural card wrappers on the grid DOM
@@ -291,6 +380,43 @@ function handleGridCardClick(event, bookId, scopingArrayContext) {
       selectedBookIds.length === 1 ? "inline-block" : "none";
   }
 }
+
+/*
+ Books in the order the library/stats views should actually display, accounting for the
+ "Sort Books by Group Order" setting (see applyLibraryInterfaceSettings()).
+
+ Alphabetical/Date Imported sort modes always override group ordering per user preference,
+ since those are explicit whole-library sorts the user picked - group order only applies
+ in Manual mode, and only when the setting is on. When both conditions hold, books are
+ listed group-by-group (following each group's own sortOrder), each group's books kept in
+ their own manual order, with ungrouped books appended last in their own manual order.
+
+ Returns loadedBooksMemory itself (not a copy) whenever grouping isn't applied, since
+ callers only read from the result - they don't need copy-on-read semantics here.
+*/
+function getBooksInDisplayOrder() {
+    const sortMode = document.getElementById("sort-selector")?.value;
+    const groupOrderedSorting = !!document.getElementById("setting-group-ordered-sorting")?.checked;
+
+    if (sortMode !== "manual" || !groupOrderedSorting) {
+        return loadedBooksMemory;
+    }
+
+    const sortedGroups = getGroupsSortedByPlacement();
+    const ordered = [];
+    sortedGroups.forEach((group) => {
+        const groupBooks = loadedBooksMemory
+            .filter((b) => b.groupId === group.id)
+            .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+        ordered.push(...groupBooks);
+    });
+    const ungroupedBooks = loadedBooksMemory
+        .filter((b) => !b.groupId)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    ordered.push(...ungroupedBooks);
+    return ordered;
+}
+
 // Tracks sorting criteria options modifications
 function sortLibrary() {
   const mode = document.getElementById("sort-selector").value;
@@ -303,7 +429,16 @@ function sortLibrary() {
   } else if (mode === "manual") {
     loadedBooksMemory.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   }
-  renderLibraryGrid();
+
+  // Re-renders whichever view is currently on screen. Previously this only ever called
+  // renderLibraryGrid(), so changing the sort mode while the stats table was open silently
+  // left it showing the old order until the user left and reopened stats.
+  const statsPanel = document.getElementById("stats-view");
+  if (statsPanel && statsPanel.style.display !== "none") {
+    if (typeof showStatsViewState === "function") showStatsViewState();
+  } else {
+    renderLibraryGrid();
+  }
 }
 
 function applyLibraryInterfaceSettings() {
@@ -311,5 +446,17 @@ function applyLibraryInterfaceSettings() {
     const lbl = document.getElementById("lbl-card-size");
     if (lbl) lbl.innerText = size;
     document.documentElement.style.setProperty('--card-dimension-width', `${size}px`);
-    saveUserConfig({ cardSize: size });
+
+    const groupOrderedSorting = !!document.getElementById("setting-group-ordered-sorting")?.checked;
+    saveUserConfig({ cardSize: size, groupOrderedSorting });
+
+    // Re-render whichever view is currently on screen, since neither the library grid nor
+    // the stats table re-reads this setting on their own - without this, toggling it would
+    // only take visible effect after switching views away and back.
+    const statsPanel = document.getElementById("stats-view");
+    if (statsPanel && statsPanel.style.display !== "none") {
+        if (typeof showStatsViewState === "function") showStatsViewState();
+    } else {
+        renderLibraryGrid();
+    }
 }
