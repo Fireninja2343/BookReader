@@ -72,7 +72,7 @@ function renderLibraryGrid() {
     buildBookCardsInLayout(getBooksInDisplayOrder(), container);
     if (document.getElementById("setting-group-ordered-sorting")?.checked
         && document.getElementById("sort-selector")?.value === "manual") {
-      renderGroupBubbleOutlines(container);
+      //renderGroupBubbleOutlines(container); Remove for now
     }
   }
 }
