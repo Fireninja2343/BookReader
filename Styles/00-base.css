@@ -276,7 +276,13 @@ input[type="range"]::-moz-range-thumb {
 .full-width-input {
     width: 100%;
     box-sizing: border-box;
+    color: var(--text-main);
+    padding: 4px 0px 4px 5px;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
 }
+
 
 /* --- Dividers --- */
 .hr-divider {
