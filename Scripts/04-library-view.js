@@ -528,14 +528,6 @@ function applyLibraryInterfaceSettings() {
 
     const groupOrderedSorting = !!document.getElementById("setting-group-ordered-sorting")?.checked;
     saveUserConfig({ cardSize: size, groupOrderedSorting });
-
-    // Re-render whichever view is currently on screen, since neither the library grid nor
-    // the stats table re-reads this setting on their own - without this, toggling it would
-    // only take visible effect after switching views away and back.
-    const statsPanel = document.getElementById("stats-view");
-    if (statsPanel && statsPanel.style.display !== "none") {
-        if (typeof showStatsViewState === "function") showStatsViewState();
-    } else {
-        renderLibraryGrid();
-    }
+    renderLibraryGrid();
+    
 }
