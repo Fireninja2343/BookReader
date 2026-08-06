@@ -61,19 +61,16 @@ function fetchLocalLibrary() {
     loadedBooksMemory = booksRequest.result;
     groupsRequest.onsuccess = () => {
       loadedGroupsMemory = groupsRequest.result;
-      /* Re-sort the in-memory library list according to whatever sort
-         option (title, date added, progress, etc.) the user currently
-         has selected, so the UI reflects that ordering right away. */
+      // Re-sort the in-memory library list according to whatever sort option (title, date added, progress, etc.)
+      // the user currently has selected, so the UI reflects that ordering right away.
       sortLibrary();
-      // Fire-and-forget: backfills missing totalPages/totalWords/chapterCount on
-      // older books. Runs in the background so rendering is not delayed, and is a
-      // no-op after each book has already been migrated.
+      // Fire-and-forget: backfills missing totalPages/totalWords/chapterCount on older books.
+      // Runs in the background so rendering is not delayed, and is a no-op after each book has already been migrated.
       if (typeof migrateMissingBookMetadata === "function") {
           migrateMissingBookMetadata();
       }
       // Fire-and-forget migration for missing lastModified fields on books/groups.
-      // Runs after fetch like the metadata migration above. Once all records have
-      // timestamps, it performs no writes on future runs.
+      // Runs after fetch like the metadata migration above. Once all records have timestamps, it performs no writes on future runs.
       
       if (typeof migrateMissingLastModified === "function") {
         migrateMissingLastModified();
@@ -104,18 +101,14 @@ function saveBookToDatabase(title, coverData, binaryData, analysisMeta = {}) {
       scrollOffset: 0,
       isRead: false,
       dateImported: new Date().getTime(),
-      /* Whatever group/folder the library is currently filtered to becomes
-         the new book's group, so it lands in the collection the user is
-         actively looking at instead of an unfiled "all books" view. */
+      // Whatever group/folder the library is currently filtered to becomes the new book's group,
+      // so it lands in the collection the user is actively looking at instead of an unfiled "all books" view.
       groupId: activeGroupFilterId,
-      /* Timestamp used later to decide which copy (this device's or the
-         cloud's) is newer when reconciling data during a Firebase sync. */
+      // Timestamp used later to decide which copy (this device's or the loud's) is newer when reconciling data during a Firebase sync.
       lastModified: new Date().getTime(),
-      /* One-time EPUB analysis computed by the caller from the zip it
-         already has open (see handleFileImport in 06-epub-reader.js), so
-         the stats views never need to reparse this file just to show page
-         counts. Left null if the caller didn't pass anything, in which
-         case ensureBookMetadataCached() will backfill it later. */
+      /* One-time EPUB analysis computed by the caller from the zip it already has open (see handleFileImport in 06-epub-reader.js),
+         so the stats views never need to reparse this file just to show page counts.
+         Left null if the caller didn't pass anything, in which case ensureBookMetadataCached() will backfill it later. */
       totalPages: analysisMeta.totalPages ?? null,
       totalWords: analysisMeta.totalWords ?? null,
       chapterCount: analysisMeta.chapterCount ?? null,
