@@ -250,6 +250,101 @@
 }
 
 /* =================================================================
+   PER-BOOK TABLE: SORTABLE COLUMN HEADERS
+   Each sortable header (Time Spent / Pages per Hour / Completion
+   Duration / Pages per Day) shows a muted up/down arrow pair. Clicking
+   cycles dormant -> high-to-low -> low-to-high -> dormant
+   (toggleStatsColumnSort() in 13-stats-view.js); only one column is
+   ever active at a time, mirroring how .gantt-scale-btn.active below
+   only ever has one active button among its siblings.
+   ================================================================= */
+.stats-sort-header {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.stats-sort-header:hover {
+    color: var(--accent);
+}
+
+.stats-sort-arrows {
+    display: inline-flex;
+    flex-direction: column;
+    margin-left: 4px;
+    vertical-align: middle;
+    line-height: 0.7;
+}
+
+.stats-sort-arrow {
+    font-size: 9px;
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+
+.stats-sort-arrow.active {
+    color: var(--accent);
+    opacity: 1;
+    text-shadow: 0 0 4px var(--glow);
+}
+
+/* =================================================================
+   PER-BOOK TABLE: GROUP COLLAPSE ARROW + ROW TINTING
+   The collapse arrow (Idea #2) only appears on the first row of a
+   contiguous run of one group's books (getContiguousGroupRuns() in
+   13-stats-view.js) - .stats-collapse-gutter reserves the same fixed
+   width on every row regardless, so title text stays aligned whether or
+   not that particular row has a visible arrow.
+   Row/summary tinting reuses the same --group-tint custom property
+   convention as .book-card in 01-library.css, set per row from JS;
+   summary rows additionally set --group-tint-strong for a visibly
+   heavier version of the same color, to read as "the group" rather than
+   "a book in the group".
+   ================================================================= */
+.stats-collapse-gutter {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+}
+
+.stats-collapse-arrow {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.stats-collapse-arrow:hover {
+    color: var(--accent);
+}
+
+/* Shown instead of .stats-collapse-arrow while a column sort is active
+   and the group is currently expanded - collapsing it back would
+   require gathering already-scattered rows, which only Collapse All or
+   clearing the column sort is allowed to do (see toggleGroupCollapse()). */
+.stats-collapse-arrow-disabled {
+    color: var(--text-muted);
+    font-size: 11px;
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.stats-row-grouped {
+    background-color: var(--group-tint, transparent);
+}
+
+.stats-row-group-summary {
+    background-color: var(--group-tint-strong, var(--bg-card));
+    font-weight: 600;
+}
+
+.stats-group-summary-counts {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+/* =================================================================
    PER-BOOK "DELTA FROM AVERAGE" COMPARISONS (stats table)
    Shown under Time Spent / Pages per Hour / Completion Duration /
    Pages per Day (buildStatDeltaHtml() in 09-stats-and-context-menu.js).

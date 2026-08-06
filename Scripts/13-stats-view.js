@@ -39,13 +39,25 @@ const DELTA_COMPARISON_STATUSES = [
     Config.Miscellaneous.READING_STATUS.PAUSED,
 ];
 /*
+ Key statAveragesByStatus stores the combined "all comparison-eligible
+ statuses" average under, alongside its normal per-status entries. Used as
+ the delta baseline for a collapsed group summary row whose books don't all
+ share one status (see buildGroupSummaryRowHtml()) - not a real reading
+ status itself, so it's kept out of DELTA_COMPARISON_STATUSES and READING_STATUS.
+*/
+const ALL_STATUSES_AVERAGE_KEY = "all";
+/*
  Computes separate averages/cutoffs for each status in
  DELTA_COMPARISON_STATUSES, so books are compared only against others with
- the same status.
+ the same status. Also computes one combined average across every
+ comparison-eligible status (see ALL_STATUSES_AVERAGE_KEY), for callers that
+ need a single baseline spanning statuses - currently only a collapsed
+ group summary row whose books don't all share one status.
 
- Returns an object keyed by status (e.g. result.completed), where each
- value has the same shape as computeStatAveragesForGroup(), allowing
- existing delta code to work unchanged.
+ Returns an object keyed by status (e.g. result.completed) plus
+ result[ALL_STATUSES_AVERAGE_KEY], where each value has the same shape as
+ computeStatAveragesForGroup(), allowing existing delta code to work
+ unchanged.
 
  Iterating DELTA_COMPARISON_STATUSES keeps this function generic—adding a
  new comparison status only requires updating that list.
@@ -56,6 +68,8 @@ function computeStatAveragesByStatus(perBookMetrics) {
         const groupMetrics = perBookMetrics.filter(m => m.status === status);
         result[status] = computeStatAveragesForGroup(groupMetrics);
     }
+    const allComparableMetrics = perBookMetrics.filter(m => DELTA_COMPARISON_STATUSES.includes(m.status));
+    result[ALL_STATUSES_AVERAGE_KEY] = computeStatAveragesForGroup(allComparableMetrics);
     return result;
 }
 /*
@@ -229,19 +243,63 @@ function buildFourMetricDeltas(m, statAveragesByStatus) {
 }
 
 /*
- Builds one <tr> for the per-book stats table, including the "delta from
- average" line under each of the four comparable stat cells (Time Spent,
- Pages per Hour, Completion Duration, Pages per Day). Split out from the
- main loop in showStatsViewState() since it needs statAveragesByStatus,
- which isn't known until every book has been visited once - see
- perBookMetrics there.
+ --group-tint custom property matching buildBookCardsInLayout()
+ (04-library-view.js), so grouped stats rows match the library grid's tint.
+
+ The stats table always lists books flat, so only the plain own-group
+ lookup is needed here - no equivalent to the activeGroupFilterId branch.
+
+ Returns "" for ungrouped books.
 */
-function buildStatsRowHtml(m, statAveragesByStatus) {
+function getGroupTintStyle(book) {
+    if (!book.groupId) return "";
+    const ownGroup = loadedGroupsMemory.find((g) => g.id === book.groupId);
+    if (!ownGroup || !ownGroup.backgroundColor) return "";
+    const tint = `color-mix(in srgb, ${ownGroup.backgroundColor} 50%, var(--bg-card))`;
+    return `--group-tint:${tint}; background-color:var(--group-tint);`;
+}
+
+/*
+ Stronger tint for a collapsed group's summary row - reuses the 75%-mix
+ buildBookCardsInLayout() uses inside a group folder. Kept on its own
+ --group-tint-strong property so it never fights a child's --group-tint.
+*/
+function getGroupSummaryTintStyle(group) {
+    if (!group || !group.backgroundColor) return "";
+    const tint = `color-mix(in srgb, ${group.backgroundColor} 75%, var(--bg-card))`;
+    return `--group-tint-strong:${tint}; background-color:var(--group-tint-strong);`;
+}
+
+/*
+ Builds one <tr> for the per-book stats table, with a "delta from average"
+ line under each of the four comparable stat cells.
+
+ options:
+ - grouped: adds .stats-row-grouped, independent of collapsibility.
+ - showCollapseArrow: true only for a contiguous expanded group's first
+   row, where the ▾ toggle lives. Other rows still reserve the gutter width
+   via .stats-collapse-gutter so titles stay aligned.
+ - groupId: wires the arrow's click handler when showCollapseArrow is true.
+ - disableCollapseArrow: true while a column sort is active. The arrow
+   still renders (gutter width unchanged) but loses its click handler and
+   gets .stats-collapse-arrow-disabled - collapsing one expanded group
+   mid-sort would leave the sorted order visibly stale until the next
+   render.
+*/
+function buildStatsRowHtml(m, statAveragesByStatus, options = {}) {
+    const { grouped = false, showCollapseArrow = false, groupId = null, disableCollapseArrow = false } = options;
     const pagesPerHourDisplay = m.pagesPerHour !== null ? `${m.pagesPerHour.toFixed(1)} p/h` : "—";
     const deltas = buildFourMetricDeltas(m, statAveragesByStatus);
+    const tintStyle = getGroupTintStyle(m.book);
+    const rowClass = grouped ? "stats-row-grouped" : "";
+    const gutterArrowHtml = showCollapseArrow
+        ? disableCollapseArrow
+            ? `<span class="stats-collapse-arrow stats-collapse-arrow-disabled">▾</span>`
+            : `<span class="stats-collapse-arrow" onclick="event.stopPropagation(); toggleStatsGroupCollapse(${groupId});">▾</span>`
+        : "";
     return `
-        <tr style="border-bottom: 1px solid var(--border);">
-            <td>${escapeHtml(m.book.title)}</td>
+        <tr class="${rowClass}" style="border-bottom: 1px solid var(--border); ${tintStyle}">
+            <td><span class="stats-collapse-gutter">${gutterArrowHtml}</span>${escapeHtml(m.book.title)}</td>
             <td style="color:var(--accent);">${READING_STATUS_LABELS[m.status]}</td>
             <td>${m.pagesRead} / ${m.totalPages || "—"} pages</td>
             <td>${formatMinutes(m.mins)}${deltas.timeSpent}</td>
@@ -251,6 +309,329 @@ function buildStatsRowHtml(m, statAveragesByStatus) {
         </tr>
     `;
 }
+
+/*
+ Which statAveragesByStatus entry a collapsed group compares against: that
+ status's average if every book shares one status, otherwise
+ ALL_STATUSES_AVERAGE_KEY.
+*/
+function resolveGroupDeltaBaselineStatus(groupMetrics) {
+    const statusesInGroup = new Set(groupMetrics.map((m) => m.status));
+    if (statusesInGroup.size === 1) {
+        const [onlyStatus] = statusesInGroup;
+        if (DELTA_COMPARISON_STATUSES.includes(onlyStatus)) return onlyStatus;
+    }
+    return ALL_STATUSES_AVERAGE_KEY;
+}
+
+/*
+ Builds the single summary <tr> standing in for a collapsed group: group
+ name, a "N books, X completed / Y in progress / Z paused" counts line, and
+ the group's own averages/deltas for the four metric columns.
+
+ Feeds computeStatAveragesForGroup()'s result into a synthetic metric object
+ shaped like a perBookMetrics entry, so buildFourMetricDeltas() can compare
+ it against the resolved baseline without its own group-specific logic.
+*/
+function buildGroupSummaryRowHtml(groupId, groupMetrics, statAveragesByStatus) {
+    const group = loadedGroupsMemory.find((g) => g.id === groupId);
+    const groupName = group ? group.name : "Unknown Group";
+    const tintStyle = getGroupSummaryTintStyle(group);
+
+    let completedCount = 0, inProgressCount = 0, pausedCount = 0;
+    groupMetrics.forEach((m) => {
+        if (m.status === READING_STATUS.COMPLETED) completedCount++;
+        else if (m.status === READING_STATUS.IN_PROGRESS) inProgressCount++;
+        else if (m.status === READING_STATUS.PAUSED) pausedCount++;
+    });
+    const bookCountLabel = `${groupMetrics.length} book${groupMetrics.length === 1 ? "" : "s"}`;
+    const countsLine = `${bookCountLabel}, ${completedCount} completed / ${inProgressCount} in progress / ${pausedCount} paused`;
+
+    const gutterArrowHtml = `<span class="stats-collapse-arrow" onclick="event.stopPropagation(); toggleStatsGroupCollapse(${groupId});">▸</span>`;
+
+    const groupOwnAverages = computeStatAveragesForGroup(groupMetrics);
+    const groupAsMetric = {
+        status: resolveGroupDeltaBaselineStatus(groupMetrics),
+        mins: groupOwnAverages.timeSpentMins,
+        pagesPerHour: groupOwnAverages.pagesPerHour,
+        completionDurationMs: groupOwnAverages.completionDurationMs,
+        pagesPerDay: groupOwnAverages.pagesPerDay,
+    };
+    const deltas = buildFourMetricDeltas(groupAsMetric, statAveragesByStatus);
+    const metricCellsHtml = FOUR_METRIC_DEFINITIONS.map((def) => {
+        const value = def.getValue(groupAsMetric);
+        const display = value === null || value === undefined ? "—" : def.format(value);
+        return `<td>${display}${deltas[def.key]}</td>`;
+    }).join("");
+
+    return `
+        <tr class="stats-row-group-summary" style="border-bottom: 1px solid var(--border); ${tintStyle}">
+            <td><span class="stats-collapse-gutter">${gutterArrowHtml}</span>${escapeHtml(groupName)}</td>
+            <td class="stats-group-summary-counts">${escapeHtml(countsLine)}</td>
+            <td>—</td>
+            ${metricCellsHtml}
+        </tr>
+    `;
+}
+
+/*
+ A group is collapsible only when all its books currently form one
+ unbroken run in the displayed order. Recomputed every render since row
+ order can change from sorting, drag-and-drop, or group-order sorting.
+
+ Returns the Set of qualifying group ids. A saved-collapsed group that
+ doesn't qualify keeps that saved state (see
+ COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY) and just renders expanded.
+*/
+function computeContiguousGroupIds(orderedMetrics) {
+    const groupIdToIndices = new Map();
+    orderedMetrics.forEach((m, idx) => {
+        const groupId = m.book.groupId;
+        if (!groupId) return;
+        if (!groupIdToIndices.has(groupId)) groupIdToIndices.set(groupId, []);
+        groupIdToIndices.get(groupId).push(idx);
+    });
+
+    const contiguousGroupIds = new Set();
+    groupIdToIndices.forEach((indices, groupId) => {
+        const isContiguous = indices.every((idx, i) => i === 0 || idx === indices[i - 1] + 1);
+        if (isContiguous) contiguousGroupIds.add(groupId);
+    });
+    return contiguousGroupIds;
+}
+
+/*
+ Persistence for which stats-table groups are collapsed, via
+ getUserConfig()/saveUserConfig() (14-utils.js). Kept independent of
+ contiguity: a group's collapsed flag survives while temporarily
+ un-collapsible, resuming the moment it's contiguous again.
+*/
+const COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY = "collapsedStatsGroupIds";
+
+function getCollapsedStatsGroupIds() {
+    const config = getUserConfig();
+    return new Set(Array.isArray(config[COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY]) ? config[COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY] : []);
+}
+
+function setCollapsedStatsGroupIds(collapsedGroupIdsSet) {
+    saveUserConfig({ [COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY]: Array.from(collapsedGroupIdsSet) });
+}
+
+/*
+ Cached perBookMetrics/statAveragesByStatus from the last showStatsViewState()
+ pass, so collapse/sort toggles can re-render just the table body instead
+ of re-running the full stats pass.
+*/
+let cachedPerBookMetrics = null;
+let cachedStatAveragesByStatus = null;
+
+// Click handler for a single group's ▾/▸ gutter arrow.
+function toggleStatsGroupCollapse(groupId) {
+    const collapsedGroupIds = getCollapsedStatsGroupIds();
+    if (collapsedGroupIds.has(groupId)) {
+        collapsedGroupIds.delete(groupId);
+    } else {
+        collapsedGroupIds.add(groupId);
+    }
+    setCollapsedStatsGroupIds(collapsedGroupIds);
+    renderStatsTableBody();
+}
+
+/*
+ Collapse All / Expand All always work regardless of sort state or any
+ group's current contiguity - they just write the full persisted
+ collapsed-id set. A group saved as collapsed here still only renders as a
+ summary row while contiguous; see computeContiguousGroupIds().
+*/
+function collapseAllStatsGroups() {
+    if (!cachedPerBookMetrics) return;
+    const allGroupIds = new Set(cachedPerBookMetrics.map((m) => m.book.groupId).filter(Boolean));
+    setCollapsedStatsGroupIds(allGroupIds);
+    renderStatsTableBody();
+}
+
+function expandAllStatsGroups() {
+    setCollapsedStatsGroupIds(new Set());
+    renderStatsTableBody();
+}
+
+/*
+ Splits perBookMetrics into row-ordering units, the same way whether or not
+ a sort is active: a single ungrouped/non-contiguous book, a
+ contiguous-and-collapsed group (one aggregate unit), or a
+ contiguous-and-expanded group (one unit wrapping all its member rows, so
+ the group is never torn apart by a sort).
+
+ Each unit is one of:
+ - { type: "book", metric }
+ - { type: "collapsedGroup", groupId, groupMetrics }
+ - { type: "expandedGroup", groupId, groupMetrics }
+*/
+function computeStatsTableUnits(perBookMetrics) {
+    const contiguousGroupIds = computeContiguousGroupIds(perBookMetrics);
+    const collapsedGroupIds = getCollapsedStatsGroupIds();
+
+    const units = [];
+    let i = 0;
+    while (i < perBookMetrics.length) {
+        const m = perBookMetrics[i];
+        const groupId = m.book.groupId;
+
+        if (groupId && contiguousGroupIds.has(groupId)) {
+            let runEnd = i;
+            while (runEnd < perBookMetrics.length && perBookMetrics[runEnd].book.groupId === groupId) {
+                runEnd++;
+            }
+            const runMetrics = perBookMetrics.slice(i, runEnd);
+            units.push(
+                collapsedGroupIds.has(groupId)
+                    ? { type: "collapsedGroup", groupId, groupMetrics: runMetrics }
+                    : { type: "expandedGroup", groupId, groupMetrics: runMetrics },
+            );
+            i = runEnd;
+        } else {
+            units.push({ type: "book", metric: m });
+            i++;
+        }
+    }
+    return units;
+}
+
+/*
+ Resolves the value a unit sorts by for the active column def, or null if
+ not comparable (sorted to the end - see sortStatsTableUnits()).
+
+ A book unit uses its own metric. A group unit, collapsed or expanded,
+ sorts by the group's own aggregate average (computeStatAveragesForGroup()),
+ so an expanded group ranks the same as it would if collapsed.
+*/
+function getStatsUnitSortValue(unit, def) {
+    if (unit.type === "book") return def.getValue(unit.metric);
+    const groupAverages = computeStatAveragesForGroup(unit.groupMetrics);
+    const value = groupAverages[def.averageKey];
+    return value === null || value === undefined ? null : value;
+}
+
+/*
+ Orders units by the active sort column, if any. Units without a
+ comparable value move to the end, in original relative order. Returns
+ units unchanged when no column is active.
+*/
+function sortStatsTableUnits(units) {
+    const { columnKey, direction } = statsSortState;
+    if (!columnKey || !direction) return units;
+
+    const def = FOUR_METRIC_DEFINITIONS.find((d) => d.key === columnKey);
+    if (!def) return units;
+
+    const withValue = [];
+    const withoutValue = [];
+    units.forEach((unit) => {
+        const value = getStatsUnitSortValue(unit, def);
+        (value === null ? withoutValue : withValue).push(unit);
+    });
+
+    withValue.sort((a, b) => {
+        const diff = getStatsUnitSortValue(a, def) - getStatsUnitSortValue(b, def);
+        return direction === "desc" ? -diff : diff;
+    });
+
+    return [...withValue, ...withoutValue];
+}
+
+/*
+ Builds the full #stats-books-table-body HTML: walks perBookMetrics'
+ display order into row-ordering units (computeStatsTableUnits()), sorts
+ those units if a column sort is active (sortStatsTableUnits()), then
+ renders each unit.
+
+ A collapsed group is always one aggregate buildGroupSummaryRowHtml() row.
+ An expanded group renders its member rows individually via
+ buildStatsRowHtml(), with disableCollapseArrow set while sorting -
+ collapsing one group mid-sort would leave a stale order on screen until
+ the next render. Collapse All / Expand All aren't affected since they
+ always re-render the whole body right after changing every group's state.
+*/
+function buildStatsTableRowsHtml(perBookMetrics, statAveragesByStatus) {
+    const isSorting = !!(statsSortState.columnKey && statsSortState.direction);
+    const units = sortStatsTableUnits(computeStatsTableUnits(perBookMetrics));
+
+    return units
+        .map((unit) => {
+            if (unit.type === "collapsedGroup") {
+                return buildGroupSummaryRowHtml(unit.groupId, unit.groupMetrics, statAveragesByStatus);
+            }
+            if (unit.type === "expandedGroup") {
+                return unit.groupMetrics
+                    .map((rm, idx) => buildStatsRowHtml(rm, statAveragesByStatus, {
+                        grouped: true,
+                        showCollapseArrow: idx === 0,
+                        groupId: unit.groupId,
+                        disableCollapseArrow: isSorting,
+                    }))
+                    .join("");
+            }
+            return buildStatsRowHtml(unit.metric, statAveragesByStatus, { grouped: !!unit.metric.book.groupId });
+        })
+        .join("");
+}
+
+/*
+ Column sort state for the per-book table's four metric headers. Not
+ persisted - resetStatsSortState() runs each time the stats view opens.
+
+ columnKey matches a FOUR_METRIC_DEFINITIONS key; direction cycles null ->
+ "desc" -> "asc" -> null. Only one column is ever active, since a new
+ columnKey always resets direction to "desc" - see handleStatsSortHeaderClick().
+*/
+let statsSortState = { columnKey: null, direction: null };
+
+function resetStatsSortState() {
+    statsSortState = { columnKey: null, direction: null };
+}
+
+/*
+ Click handler for one of the four sortable <th>s. Cycles that column
+ dormant -> ▼ desc -> ▲ asc -> dormant; clicking a different column always
+ starts it fresh at descending.
+*/
+function handleStatsSortHeaderClick(columnKey) {
+    if (statsSortState.columnKey !== columnKey) {
+        statsSortState = { columnKey, direction: "desc" };
+    } else if (statsSortState.direction === "desc") {
+        statsSortState.direction = "asc";
+    } else {
+        statsSortState = { columnKey: null, direction: null };
+    }
+    updateStatsSortHeaderUI();
+    renderStatsTableBody();
+}
+
+/*
+ Reflects statsSortState onto the four header arrow spans
+ (.stats-sort-arrow, data-direction="desc"/"asc") by toggling "active".
+*/
+function updateStatsSortHeaderUI() {
+    FOUR_METRIC_DEFINITIONS.forEach((def) => {
+        const header = document.getElementById(`stats-sort-header-${def.key}`);
+        if (!header) return;
+        header.querySelectorAll(".stats-sort-arrow").forEach((arrow) => {
+            const isActive = statsSortState.columnKey === def.key && arrow.dataset.direction === statsSortState.direction;
+            arrow.classList.toggle("active", isActive);
+        });
+    });
+}
+
+// Re-renders just the table body from the cached last-computed metrics -
+// used by every collapse/expand/sort action above so toggling never
+// re-runs the full showStatsViewState() pass.
+function renderStatsTableBody() {
+    const tbody = document.getElementById("stats-books-table-body");
+    if (!tbody || !cachedPerBookMetrics) return;
+    tbody.innerHTML = buildStatsTableRowsHtml(cachedPerBookMetrics, cachedStatAveragesByStatus);
+}
+
+
 // =================================================================
 // LIBRARY DISTRIBUTION - DYNAMIC BUCKETING ENGINE
 // =================================================================
@@ -476,6 +857,12 @@ async function showStatsViewState() {
     const statsPanel = document.getElementById("stats-view");
     statsPanel.style.display = "flex";
 
+    // Sort state is never persisted - every fresh open of the stats view
+    // starts all four sortable headers dormant, regardless of how they
+    // were left last time.
+    resetStatsSortState();
+    updateStatsSortHeaderUI();
+
     const tbody = document.getElementById("stats-books-table-body");
     tbody.innerHTML = `<tr><td colspan="7" style="padding:12px; text-align:center; color:var(--text-muted)">Loading book metadata...</td></tr>`;
 
@@ -544,9 +931,16 @@ async function showStatsViewState() {
     */
     const perBookMetrics = [];
 
-    // Loop through memory records - all numbers below come straight off
-    // each book's cached fields, no EPUB is opened here.
-    for (const book of loadedBooksMemory) {
+    /*
+     Iterates the library's actual display order (getBooksInDisplayOrder(),
+     04-library-view.js) instead of raw loadedBooksMemory, so the table
+     respects "Sort Books by Group Order" the same way the library grid's
+     "All Books" view already does - and so this order is what
+     buildStatsTableRowsHtml() below finds its contiguous group runs in.
+     All numbers below come straight off each book's cached fields, no
+     EPUB is opened here.
+    */
+    for (const book of getBooksInDisplayOrder()) {
         combinedSecondsTracked += getMeaningfulTrackedSeconds(book.timeSpentSeconds);
         totalReadingSessions += (book.totalSessions || 0);
 
@@ -700,8 +1094,14 @@ async function showStatsViewState() {
         */
         const statAveragesByStatus = computeStatAveragesByStatus(perBookMetrics);
 
+    // Cache this pass's metrics so collapse/expand toggles (see
+    // renderStatsTableBody()) can re-render the table without re-running
+    // everything above.
+    cachedPerBookMetrics = perBookMetrics;
+    cachedStatAveragesByStatus = statAveragesByStatus;
+
     // Flush table rows inside dashboard
-    tbody.innerHTML = perBookMetrics.map(m => buildStatsRowHtml(m, statAveragesByStatus)).join("");
+    renderStatsTableBody();
 
    /*
     Library Distribution charts (Book Length, Reading Status, and Reading

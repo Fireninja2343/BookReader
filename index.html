@@ -195,7 +195,14 @@
                 <div class="stat-label">SLOWEST BY PAGES/DAY</div>
                 <div id="stat-slowest-pages-per-day" class="stat-value long-stat-value">-</div>
             </div>
-        </div> <h3 class="section-heading">⏱️ Individual Breakdown Per Book</h3>
+        </div>
+        <div class="flex-between">
+            <h3 class="section-heading">⏱️ Individual Breakdown Per Book</h3>
+            <div class="flex-gap8">
+                <button class="btn-ghost btn-compact" onclick="expandAllStatsGroups()">Expand All</button>
+                <button class="btn-ghost btn-compact" onclick="collapseAllStatsGroups()">Collapse All</button>
+            </div>
+        </div>
         <div class="table-wrapper">
             <table class="data-table">
                 <thead>
@@ -203,10 +210,34 @@
                         <th>Book Title</th>
                         <th>Progress</th>
                         <th>Pages</th>
-                        <th>Time Spent</th>
-                        <th>Pages per Hour</th>
-                        <th>Completion Duration</th>
-                        <th>Pages per Day</th>
+                        <th class="stats-sort-header" id="stats-sort-header-timeSpent" onclick="handleStatsSortHeaderClick('timeSpent')">
+                            Time Spent
+                            <span class="stats-sort-arrows">
+                                <span class="stats-sort-arrow" data-direction="desc">▼</span>
+                                <span class="stats-sort-arrow" data-direction="asc">▲</span>
+                            </span>
+                        </th>
+                        <th class="stats-sort-header" id="stats-sort-header-pagesPerHour" onclick="handleStatsSortHeaderClick('pagesPerHour')">
+                            Pages per Hour
+                            <span class="stats-sort-arrows">
+                                <span class="stats-sort-arrow" data-direction="desc">▼</span>
+                                <span class="stats-sort-arrow" data-direction="asc">▲</span>
+                            </span>
+                        </th>
+                        <th class="stats-sort-header" id="stats-sort-header-completionDuration" onclick="handleStatsSortHeaderClick('completionDuration')">
+                            Completion Duration
+                            <span class="stats-sort-arrows">
+                                <span class="stats-sort-arrow" data-direction="desc">▼</span>
+                                <span class="stats-sort-arrow" data-direction="asc">▲</span>
+                            </span>
+                        </th>
+                        <th class="stats-sort-header" id="stats-sort-header-pagesPerDay" onclick="handleStatsSortHeaderClick('pagesPerDay')">
+                            Pages per Day
+                            <span class="stats-sort-arrows">
+                                <span class="stats-sort-arrow" data-direction="desc">▼</span>
+                                <span class="stats-sort-arrow" data-direction="asc">▲</span>
+                            </span>
+                        </th>
                     </tr>
                 </thead>
                 <tbody id="stats-books-table-body"></tbody>
