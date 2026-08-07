@@ -456,18 +456,30 @@ function expandAllStatsGroups() {
 }
 
 /*
- Splits perBookMetrics into row-ordering units, the same way whether or not
- a sort is active: a single ungrouped/non-contiguous book, a
- contiguous-and-collapsed group (one aggregate unit), or a
- contiguous-and-expanded group (one unit wrapping all its member rows, so
- the group is never torn apart by a sort).
+ Splits perBookMetrics into row-ordering units. Contiguity (all of a
+ group's books currently forming an unbroken run - see
+ computeContiguousGroupIds()) is only a gate here, checked below to decide
+ whether a group can be treated as a unit at all: a group that doesn't
+ qualify is never wrapped, collapsed or not, and its books fall through to
+ the plain "book" branch individually, same as an ungrouped book.
+
+ For a group that does qualify:
+ - Collapsed: always one "collapsedGroup" unit (one aggregate row), sort
+   active or not - once collapsed it's a single row, so there's nothing
+   left to scatter.
+ - Expanded, not sorting: one "expandedGroup" unit wrapping all its member
+   rows, so the group renders as a block (matches its already-unbroken
+   on-screen order).
+ - Expanded, sorting: no group-cohesion is enforced (see
+   sortStatsTableUnits()), so its books are emitted as individual "book"
+   units and scatter into the global sort like any other row.
 
  Each unit is one of:
  - { type: "book", metric }
  - { type: "collapsedGroup", groupId, groupMetrics }
  - { type: "expandedGroup", groupId, groupMetrics }
 */
-function computeStatsTableUnits(perBookMetrics) {
+function computeStatsTableUnits(perBookMetrics, isSorting) {
     const contiguousGroupIds = computeContiguousGroupIds(perBookMetrics);
     const collapsedGroupIds = getCollapsedStatsGroupIds();
 
@@ -483,11 +495,13 @@ function computeStatsTableUnits(perBookMetrics) {
                 runEnd++;
             }
             const runMetrics = perBookMetrics.slice(i, runEnd);
-            units.push(
-                collapsedGroupIds.has(groupId)
-                    ? { type: "collapsedGroup", groupId, groupMetrics: runMetrics }
-                    : { type: "expandedGroup", groupId, groupMetrics: runMetrics },
-            );
+            if (collapsedGroupIds.has(groupId)) {
+                units.push({ type: "collapsedGroup", groupId, groupMetrics: runMetrics });
+            } else if (isSorting) {
+                runMetrics.forEach((rm) => units.push({ type: "book", metric: rm }));
+            } else {
+                units.push({ type: "expandedGroup", groupId, groupMetrics: runMetrics });
+            }
             i = runEnd;
         } else {
             units.push({ type: "book", metric: m });
@@ -514,8 +528,8 @@ function getStatsUnitSortValue(unit, def) {
 
 /*
  Orders units by the active sort column, if any. Units without a
- comparable value move to the end, in original relative order. Returns
- units unchanged when no column is active.
+ comparable value move to the end, in original relative order.
+ Returns units unchanged when no column is active.
 */
 function sortStatsTableUnits(units) {
     const { columnKey, direction } = statsSortState;
@@ -541,9 +555,9 @@ function sortStatsTableUnits(units) {
 
 /*
  Builds the full #stats-books-table-body HTML: walks perBookMetrics'
- display order into row-ordering units (computeStatsTableUnits()), sorts
- those units if a column sort is active (sortStatsTableUnits()), then
- renders each unit.
+ display order into row-ordering units (computeStatsTableUnits()),
+ sorts those units if a column sort is active (sortStatsTableUnits()),
+ then renders each unit.
 
  A collapsed group is always one aggregate buildGroupSummaryRowHtml() row.
  An expanded group renders its member rows individually via
@@ -554,7 +568,7 @@ function sortStatsTableUnits(units) {
 */
 function buildStatsTableRowsHtml(perBookMetrics, statAveragesByStatus) {
     const isSorting = !!(statsSortState.columnKey && statsSortState.direction);
-    const units = sortStatsTableUnits(computeStatsTableUnits(perBookMetrics));
+    const units = sortStatsTableUnits(computeStatsTableUnits(perBookMetrics, isSorting));
 
     return units
         .map((unit) => {
