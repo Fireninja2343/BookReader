@@ -2,7 +2,6 @@
 // READING ACTIVITY HISTORY - RAW EVENT LOG + CALENDAR HEATMAP
 // =================================================================
 /*
- READING ACTIVITY HISTORY - raw event log + calendar heatmap
  Adds a per-day reading-activity calendar (GitHub-contribution-style) to
  the stats view, built on top of the real-session engine in
  09-stats-and-context-menu.js rather than duplicating its activity/idle
@@ -25,10 +24,14 @@
 // -----------------------------------------------------------------
 let currentHistorySegment = null; // {bookId, startTimestamp, chapterStart, chapterEnd}
 
-// Opens a new segment. Only one is ever open at a time, mirroring the
-// single open reading session in 09-stats-and-context-menu.js - if one is
-// already open this is a no-op (continueOrStartReadingSession() only calls
-// this the first time a session actually starts).
+/**
+ Opens a new segment. Only one is ever open at a time, mirroring the single open reading session in
+ 09-stats-and-context-menu.js - if one is already open this is a no-op (continueOrStartReadingSession() only
+ calls this the first time a session actually starts).
+
+ @param {string|number} bookId - The book the segment belongs to.
+ @param {number} chapterPointer - The chapter index the session is opening on.
+ */
 function startHistorySegment(bookId, chapterPointer) {
     if (currentHistorySegment) return;
     currentHistorySegment = {
@@ -39,30 +42,28 @@ function startHistorySegment(bookId, chapterPointer) {
     };
 }
 
-// Widens the open segment's chapter range to include a newly-visited
-// chapter. Called on every chapter change while a segment is open, so the
-// eventual entry reflects the full range read during the session - not
-// just whatever chapter it happened to start on. Uses min/max rather than
-// first/last so jumping back a chapter (e.g. to re-read something) still
-// counts as part of the same range instead of overwriting it.
+/**
+ Widens the open segment's chapter range to include a newly-visited chapter. Called on every chapter change
+ while a segment is open, so the eventual entry reflects the full range read during the session - not just
+ whatever chapter it happened to start on. Uses min/max rather than first/last so jumping back a chapter
+ (e.g. to re-read something) still counts as part of the same range instead of overwriting it.
+
+ @param {number} chapterPointer - The chapter index just visited.
+ */
 function recordHistoryChapterVisited(chapterPointer) {
     if (!currentHistorySegment) return;
     if (chapterPointer < currentHistorySegment.chapterStart) currentHistorySegment.chapterStart = chapterPointer;
     if (chapterPointer > currentHistorySegment.chapterEnd) currentHistorySegment.chapterEnd = chapterPointer;
 }
 
-/*
- Flushes the currently open segment to IndexedDB as one readingHistory
- entry, without closing it out. Safe to call as often as needed - repeated
- calls all share the same startTimestamp, so upsertReadingHistoryEntry()
- in 02-db.js updates the same array entry in place rather than appending a
- new one each time. This is what keeps one long, continuous reading
- session as a single history entry instead of a pile of tiny fragments,
- while still making sure a crash or surprise tab close never loses more
- than one flush interval's worth of activity (see saveTimeToDB() in
- 09-stats-and-context-menu.js, which calls this on its existing batched
- cadence).
-*/
+/**
+ Flushes the currently open segment to IndexedDB as one readingHistory entry, without closing it out. Safe to
+ call as often as needed - repeated calls all share the same startTimestamp, so upsertReadingHistoryEntry() in
+ 02-db.js updates the same array entry in place rather than appending a new one each time. This is what keeps
+ one long, continuous reading session as a single history entry instead of a pile of tiny fragments, while
+ still making sure a crash or surprise tab close never loses more than one flush interval's worth of activity
+ (see saveTimeToDB() in 09-stats-and-context-menu.js, which calls this on its existing batched cadence).
+ */
 function persistHistorySegment() {
     if (!currentHistorySegment) return;
     const now = Date.now();
@@ -82,10 +83,11 @@ function persistHistorySegment() {
     });
 }
 
-// Finalizes and clears the open segment. Called from endReadingSession()
-// alongside appendReadingSession(), so both the summary session log and
-// this raw per-day history close out at exactly the same moments: reader
-// close, tab hidden, the inactivity timeout, or switching books.
+/**
+ Finalizes and clears the open segment. Called from endReadingSession() alongside appendReadingSession(), so
+ both the summary session log and this raw per-day history close out at exactly the same moments: reader
+ close, tab hidden, the inactivity timeout, or switching books.
+ */
 function closeHistorySegment() {
     if (!currentHistorySegment) return;
     persistHistorySegment();
@@ -102,17 +104,19 @@ function formatLocalDateKey(date) {
     return `${y}-${m}-${d}`;
 }
 
-/*
- Splits one readingHistory entry's secondsSpent across the local calendar
- day(s) it overlaps, proportional to how much of the [startTimestamp,
- endTimestamp) interval falls in each day. In practice this is almost
- always a single day - real sessions are cut off well before the 5-minute
- inactivity timeout could span midnight - but a session that does straddle
- midnight is still attributed fairly to both days instead of being dumped
- entirely onto whichever day it started or ended on. Grouping uses the
- browser's local time zone throughout (via the Date constructor / getters
- below), never UTC.
-*/
+/**
+ Splits one readingHistory entry's secondsSpent across the local calendar day(s) it overlaps, proportional to
+ how much of the [startTimestamp, endTimestamp) interval falls in each day. In practice this is almost always
+ a single day - real sessions are cut off well before the 5-minute inactivity timeout could span midnight -
+ but a session that does straddle midnight is still attributed fairly to both days instead of being dumped
+ entirely onto whichever day it started or ended on. Grouping uses the browser's local time zone throughout
+ (via the Date constructor / getters below), never UTC.
+
+ @param {{startTimestamp: number, endTimestamp: number, secondsSpent: number, chapterStart: number, chapterEnd: number}} entry
+ A single readingHistory entry.
+ @returns {Array<{dayKey: string, secondsSpent: number, chapterStart: number, chapterEnd: number}>}
+ One slice per local day the entry overlaps.
+ */
 function splitHistoryEntryAcrossLocalDays(entry) {
     const slices = [];
     let cursor = entry.startTimestamp;
@@ -139,11 +143,16 @@ function splitHistoryEntryAcrossLocalDays(entry) {
     return slices;
 }
 
-// Rough page estimate for a chapter range, using the same
-// chapters-advanced-as-a-fraction-of-the-book approach already used
-// elsewhere for session-level estimates (see endReadingSession() in
-// 09-stats-and-context-menu.js) - never stored, only ever computed here on
-// demand from each book's existing cached totalPages/chapterCount.
+/**
+ Rough page estimate for a chapter range, using the same chapters-advanced-as-a-fraction-of-the-book approach
+ already used elsewhere for session-level estimates (see endReadingSession() in 09-stats-and-context-menu.js)
+ - never stored, only ever computed here on demand from each book's existing cached totalPages/chapterCount.
+
+ @param {Object} book - The book record, used for its cached chapterCount/totalPages.
+ @param {number} chapterStart - First chapter index in the range.
+ @param {number} chapterEnd - Last chapter index in the range.
+ @returns {number|null} The estimated pages read, or null if the book lacks cached chapterCount/totalPages.
+ */
 function estimateHistoryPagesRead(book, chapterStart, chapterEnd) {
     const chapterCount = book.chapterCount || 0;
     const totalPages = book.totalPages || 0;
@@ -152,16 +161,15 @@ function estimateHistoryPagesRead(book, chapterStart, chapterEnd) {
     return Math.round((chaptersSpan / chapterCount) * totalPages);
 }
 
-/*
- Builds a map of localDayKey ("YYYY-MM-DD") -> {
-   totalSeconds, totalPagesEstimate,
-   books: { [bookId]: { title, secondsSpent, chapterStart, chapterEnd, pagesEstimate } }
- }
- across every book's readingHistory. This is the single source of truth
- the calendar heatmap (and its hover popup) render from - Total reading
- time per day and Estimated pages read per day both fall straight out of
- it with no separate calculation path needed.
-*/
+/**
+ Builds a map of localDayKey ("YYYY-MM-DD") -> { totalSeconds, totalPagesEstimate, books: { [bookId]: { title,
+ secondsSpent, chapterStart, chapterEnd, pagesEstimate } } } across every book's readingHistory. This is the
+ single source of truth the calendar heatmap (and its hover popup) render from - total reading time per day
+ and estimated pages read per day both fall straight out of it with no separate calculation path needed.
+
+ @param {Array<Object>} books - The books to aggregate readingHistory from.
+ @returns {Object<string, Object>} Map of local day key to that day's totals.
+ */
 function aggregateReadingHistoryByLocalDay(books) {
     const byDay = {};
 
@@ -245,15 +253,16 @@ const HEATMAP_REFERENCE_PERCENTILE = Config.Timelines.HEATMAP_REFERENCE_PERCENTI
 const HEATMAP_MIN_DAYS_FOR_PERCENTILE_REFERENCE = Config.Timelines.HEATMAP_MIN_DAYS_FOR_PERCENTILE_REFERENCE;
 // below this, not enough days to make a percentile meaningful over the true max - see computeHeatmapReferenceSeconds()
 
-/*
- Computes the "fully lit" reference value day totals are scaled against.
- Uses the same percentile() helper and small-sample fallback pattern as
- buildDynamicBuckets() in 09-stats-and-context-menu.js: with very few
- recorded days, a percentile isn't meaningfully different from (and can
- even sit below) the true max, so this just uses the max directly until
- there's enough data for the percentile to be doing real outlier-resistant
- work instead of arbitrarily discarding the only data available.
-*/
+/**
+ Computes the "fully lit" reference value day totals are scaled against. Uses the same percentile() helper and
+ small-sample fallback pattern as buildDynamicBuckets() in 09-stats-and-context-menu.js: with very few recorded
+ days, a percentile isn't meaningfully different from (and can even sit below) the true max, so this just uses
+ the max directly until there's enough data for the percentile to be doing real outlier-resistant work instead
+ of arbitrarily discarding the only data available.
+
+ @param {Array<number>} dayTotals - Total seconds read per day, across all recorded days.
+ @returns {number} The reference value in seconds, or 0 if no day has any recorded time.
+ */
 function computeHeatmapReferenceSeconds(dayTotals) {
     const nonZero = dayTotals.filter((s) => s > 0).sort((a, b) => a - b);
     if (nonZero.length === 0) return 0;
@@ -268,12 +277,14 @@ function computeHeatmapReferenceSeconds(dayTotals) {
     return reference > 0 ? reference : nonZero[nonZero.length - 1];
 }
 
-/*
- Reads the real cell size and gap from CSS custom properties/computed
- style where available, falling back to the constants above. Keeping this
- as its own function means the CSS is still the single source of truth for
+/**
+ Reads the real cell size and gap from CSS custom properties/computed style where available, falling back to
+ the constants above. Keeping this as its own function means the CSS is still the single source of truth for
  how a cell actually looks - this only asks "how wide is that, in px?".
-*/
+
+ @param {HTMLElement} container - The heatmap container to read CSS metrics from.
+ @returns {{cellPx: number, gapPx: number}} The resolved cell size and gap, in pixels.
+ */
 function getHeatmapCellMetrics(container) {
     let cellPx = HEATMAP_CELL_PX;
     let gapPx = HEATMAP_GAP_PX;
@@ -297,13 +308,14 @@ function getHeatmapCellMetrics(container) {
     return { cellPx, gapPx };
 }
 
-/*
- Figures out how many weeks to render given the container's current
- available width. Uses the container's own clientWidth (not the window's)
- so this keeps working correctly regardless of sidebars, padding, or
- whatever else is squeezing the stats view - it only ever asks "how much
- room do I actually have right here?".
-*/
+/**
+ Figures out how many weeks to render given the container's current available width. Uses the container's own
+ clientWidth (not the window's) so this keeps working correctly regardless of sidebars, padding, or whatever
+ else is squeezing the stats view - it only ever asks "how much room do I actually have right here?".
+
+ @param {HTMLElement} container - The heatmap container to measure.
+ @returns {number} The number of weeks to render, clamped between HEATMAP_MIN_WEEKS and HEATMAP_MAX_WEEKS.
+ */
 function computeResponsiveHeatmapWeeks(container) {
     const { cellPx, gapPx } = getHeatmapCellMetrics(container);
     const availableWidth = container.clientWidth || container.getBoundingClientRect().width || 0;
@@ -319,6 +331,10 @@ function computeResponsiveHeatmapWeeks(container) {
 // etc.) - set up once and reused rather than recreated on every render.
 let heatmapResizeObserver = null;
 
+/**
+ Sets up the shared resize observer for the heatmap container, if not already set up.
+ @param {HTMLElement} container - The heatmap container to observe.
+ */
 function ensureHeatmapResizeObserver(container) {
     if (heatmapResizeObserver) return;
     if (typeof ResizeObserver === "undefined") return; // very old browsers just keep the last computed week count
@@ -330,6 +346,10 @@ function ensureHeatmapResizeObserver(container) {
     heatmapResizeObserver.observe(container);
 }
 
+/**
+ @param {number} seconds - Seconds read on the day being leveled.
+ @returns {number} A level from 0 (none) to 4 (fully lit).
+ */
 function heatmapLevelForSeconds(seconds, referenceSeconds) {
     if (!seconds || seconds <= 0 || referenceSeconds <= 0) return 0;
     const fraction = seconds / referenceSeconds;
@@ -345,7 +365,11 @@ function heatmapLevelForSeconds(seconds, referenceSeconds) {
     }
     return Math.min(4, resolved);
 }
-
+/**
+ Formats a YYYY-MM-DD date key into a localized long-date string.
+ @param {string} dayKey
+ @returns {string}
+ */
 function formatHistoryDayLabel(dayKey) {
     const [y, m, d] = dayKey.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, {
@@ -356,6 +380,7 @@ function formatHistoryDayLabel(dayKey) {
     });
 }
 
+/** Renders a responsive GitHub-style reading activity heatmap calendar and legend. */
 function renderReadingActivityCalendar() {
     const container = document.getElementById("reading-activity-calendar-container");
     if (!container) return;
@@ -373,33 +398,19 @@ function renderReadingActivityCalendar() {
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-    // How many weeks fit in the container's current width - a full year
-    // (HEATMAP_MAX_WEEKS) whenever there's room, fewer on narrow screens,
-    // never below HEATMAP_MIN_WEEKS. Recomputed on every render so a
-    // resize (see ensureHeatmapResizeObserver below) just calls this again.
     const totalWeeks = computeResponsiveHeatmapWeeks(container);
 
-    // Grid starts on the Sunday on/before (today - totalWeeks weeks) and
-    // always spans exactly totalWeeks complete weeks (Sun-Sat), same as
-    // GitHub's - any days after today within the current week are rendered
-    // too, just blanked out as "future", so the grid is always a clean
-    // rectangle instead of an uneven last column.
+    // Start on Sunday of the earliest week in range
     const currentWeekStart = new Date(todayStart);
-    currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay()); // Sunday of *this* week
+    currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay());
 
     const gridStart = new Date(currentWeekStart);
-    gridStart.setDate(gridStart.getDate() - (totalWeeks - 1) * 7); // back up (totalWeeks-1) full weeks
+    gridStart.setDate(gridStart.getDate() - (totalWeeks - 1) * 7);
 
     const totalDays = totalWeeks * 7;
-
-    // Robust "fully lit" reference value - see computeHeatmapReferenceSeconds()
-    // above for why this is a high percentile of day totals rather than the
-    // single highest day.
     const dayTotals = dayKeys.map((key) => byDay[key].totalSeconds);
     const referenceSeconds = computeHeatmapReferenceSeconds(dayTotals);
 
-    // Month labels: one per week-column whose first (Sunday) day falls in
-    // the first seven days of a new month.
     const monthLabelCells = [];
     let dayCursor = new Date(gridStart);
     for (let week = 0; week < totalWeeks; week++) {
@@ -450,15 +461,15 @@ function renderReadingActivityCalendar() {
         </div>
     `;
 }
+/**
+ Hover popup for a single calendar day - shows the books read that day, reading time per book, and chapter
+ range per book (when the book has enough cached metadata to know one). Reuses positionFlyoutMenu() from
+ 10-utils.js (originally built for the 3-dots context menus) since a mouseenter event's currentTarget works
+ exactly the same way a click event's does for that positioning logic.
 
-/*
- Hover popup for a single calendar day - shows the books read that day,
- reading time per book, and chapter range per book (when the book has
- enough cached metadata to know one). Reuses positionFlyoutMenu() from
- 10-utils.js (originally built for the 3-dots context menus) since a
- mouseenter event's currentTarget works exactly the same way a click
- event's does for that positioning logic.
-*/
+ @param {MouseEvent} event - The triggering mouseenter event, used to position the tooltip.
+ @param {string} dayKey - The local day key ("YYYY-MM-DD") to show details for.
+ */
 function showHistoryDayTooltip(event, dayKey) {
     const tooltip = document.getElementById("calendar-day-tooltip");
     if (!tooltip) return;

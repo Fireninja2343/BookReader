@@ -1,29 +1,23 @@
 /*
  NOTES MODULE
- A note comes from text selected while reading (bookId/bookTitle recorded
- so it stays traceable even if the book is later deleted) or is created
- manually from the Notes page with an optional book link.
+ A note comes from text selected while reading (bookId/bookTitle recorded so it stays traceable even if
+ the book is later deleted) or is created manually from the Notes page with an optional book link.
 
- Organized by TAGS rather than a single group: a note can carry any number
- of manual tags (note.tagIds, referencing STORE_NOTE_GROUPS rows - schema
- name unchanged, just user-facing "tags" now instead of "group"). Any note
- linked to a book also gets a derived "book tag" (never stored, computed
- at render time from bookId/bookTitle + that book's group color).
+ Organized by TAGS rather than a single group: a note can carry any number of manual tags (note.tagIds,
+ referencing STORE_NOTE_GROUPS rows - schema name unchanged, just user-facing "tags" now instead of
+ "group"). Any note linked to a book also gets a derived "book tag" (never stored, computed at render
+ time from bookId/bookTitle + that book's group color).
 
- IndexedDB is the source of truth; notes/tags mirror to Firebase the same
- way books/groups do (see pushNoteToCloud/pushNoteTagToCloud calls here
- and the reconciliation in pullInitialSyncFromCloud(), 11-firebase-sync.js).
+ IndexedDB is the source of truth; notes/tags mirror to Firebase the same way books/groups do.
 */
 
 let loadedNotesMemory = [];
 let loadedNoteTagsMemory = [];
 
-/*
- Keys of tag sections collapsed on the Notes page. Empty = everything
- expanded (inverse of an "expanded" set, so new tags start expanded with
- no bookkeeping). "none" = untagged bucket, "all" = All Notes section,
- `book:<bookId>` = a book auto-tag. Persisted to localStorage so layout
- survives reloads.
+/**
+ Keys of tag sections collapsed on the Notes page. Empty = everything expanded (inverse of an "expanded"
+ set, so new tags start expanded with no bookkeeping). "none" = untagged bucket, "all" = All Notes
+ section, `book:<bookId>` = a book auto-tag. Persisted to localStorage so layout survives reloads.
 */
 const COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY = Config.Db.COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY;
 
@@ -39,11 +33,11 @@ let collapsedNoteTagKeys = loadCollapsedNoteTagKeys();
 
 let noteSelectionButton = null;
 
-/*
- Matches touch-primary devices (phones/tablets) as opposed to a mouse-driven desktop.
- Used to decide which side of the selection the "Add Note" button renders on - see showNoteSelectionButton() below.
- A live MediaQueryList rather than a one-time boolean so a device switching input modes 
- (e.g. a touch laptop with a mouse plugged in) is reflected without a reload.
+/**
+ Matches touch-primary devices (phones/tablets) as opposed to a mouse-driven desktop. Used to decide
+ which side of the selection the "Add Note" button renders on. A live MediaQueryList rather than a
+ one-time boolean so a device switching input modes (e.g. a touch laptop with a mouse plugged in) is
+ reflected without a reload.
 */
 const NOTE_SELECTION_BUTTON_TOUCH_MEDIA_QUERY = window.matchMedia("(hover: none) and (pointer: coarse)");
 
@@ -57,6 +51,7 @@ const LAST_NOTE_TAGS_STORAGE_KEY = Config.Db.LAST_NOTE_TAGS_STORAGE_KEY;
 // -----------------------------------------------------------------
 // DATABASE LOAD / REFRESH
 // -----------------------------------------------------------------
+/** Reloads notes and note tags from IndexedDB into memory and re-renders any currently open views. */
 async function fetchNotesLibrary() {
   if (!db) return;
   const transaction = db.transaction([STORE_NOTES, STORE_NOTE_GROUPS], "readonly");
@@ -71,26 +66,18 @@ async function fetchNotesLibrary() {
   loadedNoteTagsMemory = tags;
 
   renderNotesPageIfOpen();
-  /*
-   Fire-and-forget backfill for notes/note tags created before
-   lastModified was stamped at write time (see updateNoteFields(),
-   createNoteTag(), etc. elsewhere in this file). Reuses the same
-   backfillMissingField() primitive books/groups use in 02-db.js's
-   migrateMissingLastModified() - a no-op once every record already has
-   one, so safe to call on every fetch.
-  */
+  // Fire-and-forget backfill for notes/note tags created before lastModified was stamped at write
+  // time - a no-op once every record already has one, so safe to call on every fetch.
   if (typeof migrateMissingNoteLastModified === "function") {
     migrateMissingNoteLastModified();
   }
 }
 
-/*
- Notes/tags counterpart to migrateMissingLastModified() in 02-db.js - see
- that function's doc comment for the shared rationale. dateCreated is the
- best available "when was this actually touched" signal for a note that
- predates lastModified (there's no equivalent of a book's lastOpened for
- notes), so it's used as the backfilled value rather than an arbitrary
- "right now" that would make an old, untouched note look freshly edited.
+/**
+ Backfills a lastModified onto any note or note tag that predates that field. dateCreated is the best
+ available "when was this actually touched" signal for a note (there's no equivalent of a book's
+ lastOpened for notes), so it's used as the backfilled value rather than an arbitrary "right now" that
+ would make an old, untouched note look freshly edited.
 */
 function migrateMissingNoteLastModified() {
   backfillMissingField(
@@ -109,9 +96,7 @@ function migrateMissingNoteLastModified() {
   );
 }
 
-// Re-renders the Notes page and/or the tag-management list only if
-// they're actually visible right now, so a background note-tag edit
-// doesn't do pointless DOM work while the user is reading or in the library.
+/** Re-renders the Notes page and/or tag-management list only if they're actually visible right now. */
 function renderNotesPageIfOpen() {
   const notesView = document.getElementById("notes-view");
   if (notesView && notesView.style.display === "flex") {
@@ -171,11 +156,12 @@ function showNoteSelectionButton(rect, selectedText) {
   btn.innerText = "📝 Add Note";
 
   /*
-   On touch devices the OS draws its own selection toolbar (copy/cut/paste) directly above the selection rect,
-   the same spot this button used to claim, so the two would overlap and the OS toolbar always won out.
-   Placing the button below the selection instead leaves that native toolbar untouched and still puts the button somewhere the user is already looking.
-   Desktop mouse selections have no such competing toolbar, so this keeps the original above-selection placement there,
-   which reads more naturally next to a cursor.
+   On touch devices the OS draws its own selection toolbar (copy/cut/paste) directly above the selection
+   rect, the same spot this button used to claim, so the two would overlap and the OS toolbar always won
+   out. Placing the button below the selection instead leaves that native toolbar untouched and still
+   puts the button somewhere the user is already looking. Desktop mouse selections have no such
+   competing toolbar, so this keeps the original above-selection placement there, which reads more
+   naturally next to a cursor.
   */
   if (NOTE_SELECTION_BUTTON_TOUCH_MEDIA_QUERY.matches) {
     btn.style.top = `${rect.bottom + NOTE_SELECTION_BUTTON_TOUCH_OFFSET_PX}px`;
@@ -219,12 +205,14 @@ document.addEventListener("mousedown", (e) => {
 // NOTE EDITOR MODAL (shared by the selection flow, manual creation, and
 // editing an existing note)
 // -----------------------------------------------------------------
+/** Opens the note editor for a brand new manually-created note, with no book or tags preselected. */
 function openManualNoteCreationModal() {
-  // Manual creation always defaults to no book and no tags, regardless of
-  // whatever was last used from the in-reader selection flow.
+  // Manual creation always defaults to no book and no tags, regardless of whatever was last used
+  // from the in-reader selection flow.
   openNoteEditorModal({ selectedText: "", bookId: null, bookTitle: null, tagIds: [] });
 }
 
+/** Opens the shared note editor modal, populated for either a new note or an existing one to edit. */
 function openNoteEditorModal({
   selectedText = "",
   comment = "",
@@ -251,9 +239,8 @@ function openNoteEditorModal({
   document.getElementById("note-editor-modal").showModal();
 }
 
-// Lists every book currently in the library so a manually-created note can
-// be linked to one (or left as "None"). Book-originated notes get the
-// originating book preselected here too, but the field stays editable.
+// Lists every book in the library so a manually-created note can be linked to one (or left as "None").
+// Book-originated notes get the originating book preselected here too, but the field stays editable.
 function populateNoteEditorBookSelect(selectEl, selectedBookId) {
   selectEl.innerHTML = "";
   const noneOption = document.createElement("option");
@@ -271,8 +258,10 @@ function populateNoteEditorBookSelect(selectEl, selectedBookId) {
   selectEl.value = selectedBookId != null ? String(selectedBookId) : "";
 }
 
-// Multi-select checkbox list of the real (non-book) tags, so a note can
-// carry any number of them at once instead of being limited to one.
+/** Multi-select checkbox list of the real (non-book) tags, so a note can carry any number at once instead of being limited to one.
+ @param containerEl The <div> that will hold the checkboxes
+ @param selectedTagIds An array of tag ids that should be pre-checked
+*/
 function populateNoteEditorTagCheckboxes(containerEl, selectedTagIds) {
   containerEl.innerHTML = "";
 
@@ -302,6 +291,11 @@ function populateNoteEditorTagCheckboxes(containerEl, selectedTagIds) {
   });
 }
 
+/**
+ Reads the IDs of the checked tag checkboxes from the container.
+ @param containerEl The <div> containing the tag checkboxes
+ @returns An array of checked tag IDs
+ */
 function readCheckedTagIdsFrom(containerEl) {
   return Array.from(containerEl.querySelectorAll("input[type='checkbox']:checked")).map((cb) =>
     parseInt(cb.value, 10),
@@ -312,6 +306,7 @@ function closeNoteEditorModal() {
   document.getElementById("note-editor-modal").close();
 }
 
+/** Reads the note editor form and either updates the note being edited or creates a new one. */
 function submitNoteEditorForm() {
   const text = document.getElementById("note-editor-text-input").value.trim();
   if (!text) {
@@ -324,9 +319,9 @@ function submitNoteEditorForm() {
   const bookSelectValue = document.getElementById("note-editor-book-select").value;
   const bookId = bookSelectValue ? parseInt(bookSelectValue, 10) : null;
   const linkedBook = bookId != null ? loadedBooksMemory.find((b) => b.id === bookId) : null;
-  // Falls back to whatever book title the note already carried (e.g. when
-  // editing a book-originated note whose book has since been deleted and
-  // so no longer appears in the <select>) rather than wiping it out.
+  // Falls back to whatever book title the note already carried (e.g. when editing a book-originated
+  // note whose book has since been deleted and so no longer appears in the <select>) rather than
+  // wiping it out.
   const bookTitle = linkedBook ? linkedBook.title : (bookId != null ? noteEditorBookContext.bookTitle : null);
 
   const tagIds = readCheckedTagIdsFrom(document.getElementById("note-editor-tags-container"));
@@ -351,8 +346,7 @@ function submitNoteEditorForm() {
     bookId: bookId,
     bookTitle: bookTitle,
     dateCreated: Date.now(),
-    // See the comment on updateNoteFields() above for why this matters -
-    // stamped at creation for the same reason edits stamp it.
+    // Stamped at creation for the same reason edits stamp it - see updateNoteFields() below.
     lastModified: Date.now(),
   };
 
@@ -383,8 +377,7 @@ function renderNotesPage() {
   renderNotesList();
 }
 
-// Every distinct book referenced by any current note gets its own
-// (derived, not stored) auto-tag descriptor: {key, name, color}.
+/** Every distinct book referenced by any current note gets its own (derived, not stored) auto-tag descriptor: {key, name, color}.*/
 function collectBookAutoTags() {
   const byKey = new Map();
   loadedNotesMemory.forEach((note) => {
@@ -405,9 +398,12 @@ function collectBookAutoTags() {
   return Array.from(byKey.values());
 }
 
-// Returns every tag key that applies to a note: its manual tagIds, plus its
-// derived book auto-tag key if it has a linked book. A note with neither
-// falls into the "none" (untagged) bucket.
+/**
+ Returns every tag key a note belongs to: its manual tagIds plus a derived book auto-tag key if linked to a book.
+ A note with neither falls into the "none" (untagged) bucket.
+ @param note The note object to compute keys for
+ @returns An array of tag keys (strings)
+*/
 function keysForNote(note) {
   const keys = (note.tagIds || []).slice();
   if (note.bookId != null) keys.push(`book:${note.bookId}`);
@@ -451,7 +447,10 @@ function renderNotesList() {
     container.appendChild(buildNoteTagSection(section));
   });
 }
-
+/** Builds a section for a group of notes with the same tag. 
+ * @param section An object with {key, name, color, notes} describing the tag and its notes
+ * @returns {HTMLDivElement} A DOM element representing the section, ready to be appended to the notes list container
+*/
 function buildNoteTagSection(section) {
   const isCollapsed = collapsedNoteTagKeys.has(section.key);
 
@@ -510,7 +509,10 @@ function buildNoteTagSection(section) {
 
   return wrapper;
 }
-
+/** Builds a card for a single note.
+ * @param note The note object to build a card for
+ * @returns {HTMLDivElement} A DOM element representing the note card, ready to be appended to the notes list container
+ */
 function buildNoteCard(note) {
   const card = document.createElement("div");
   card.className = "note-card";
@@ -616,11 +618,9 @@ function deleteNote(noteId) {
 
 // -----------------------------------------------------------------
 // PER-NOTE 3-DOTS ACTIONS FLYOUT
-// Mirrors the book-context-menu pattern in 09-stats-and-context-menu.js:
-// one shared floating menu, positioned relative to whichever trigger button
-// was clicked (auto-flipping to stay within the viewport, see
-// positionFlyoutMenu in 10-utils.js), that acts on whichever note's
-// trigger was last clicked.
+// Mirrors the book-context-menu pattern elsewhere in the app: one shared floating menu, positioned
+// relative to whichever trigger button was clicked (auto-flipping to stay within the viewport), that
+// acts on whichever note's trigger was last clicked.
 // -----------------------------------------------------------------
 let currentActiveContextNoteId = null;
 
@@ -662,9 +662,7 @@ function triggerNoteContextAction(actionKey) {
   }
 }
 
-// Shared write-path for field edits. lastModified is stamped at the
-// moment of the local edit (see updateBookRecord()'s doc comment in
-// 10-utils.js for the same rationale, applied here to notes).
+/** Shared write-path for note field edits. Stamps lastModified at the moment of the local edit. */
 function updateNoteFields(noteId, changes) {
   updateRecordInStore(
     STORE_NOTES,
@@ -676,9 +674,8 @@ function updateNoteFields(noteId, changes) {
 
 // -----------------------------------------------------------------
 // "MOVE NOTE (TAG)" - lightweight tag-only picker
-// A quicker path than the full editor for the common case of just
-// re-tagging a note; only touches note.tagIds and never the automatic book
-// tag, which is never user-editable directly.
+// A quicker path than the full editor for the common case of just re-tagging a note; only touches
+// note.tagIds and never the automatic book tag, which is never user-editable directly.
 // -----------------------------------------------------------------
 function openNoteTagPickerModal(note) {
   noteTagPickerNoteId = note.id;
@@ -767,12 +764,12 @@ function updateNoteTag(tagId, changes) {
   ).then(() => fetchNotesLibrary());
 }
 
+/** Creates a new note tag with a placeholder name and random color, ready to edit inline. */
 function createNoteTag() {
   /*
-   New tags are inserted immediately with a placeholder name and a random
-   color rather than through a separate two-step creation form - the name
-   and color inputs in the management list are then right there to edit,
-   matching how the rest of this app's settings auto-save the moment they
+   New tags are inserted immediately with a placeholder name and a random color rather than through
+   a separate two-step creation form - the name and color inputs in the management list are then
+   right there to edit, matching how the rest of this app's settings auto-save the moment they
    change instead of needing an explicit "create" step.
   */
   const randomColor = `#${Math.floor(Math.random() * 0xffffff)

@@ -3,7 +3,7 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 // =================================================================
-// PROGRESS BAR INTERACTION ROUTINES & RENDERING SPLITS
+// READER PROGRESS BAR
 // =================================================================
 function renderProgressBarTicks() {
     const tickContainer = document.getElementById("chapter-ticks-container");
@@ -38,6 +38,13 @@ function renderProgressBarTicks() {
     }
 }
 
+/**
+ Click handler for the reader progress bar track. Maps the click's horizontal position to
+ a chapter and an in-chapter scroll percentage using the same word-weighted boundaries the
+ tick marks and fill bar are drawn from, then jumps the reader there.
+
+ @param {MouseEvent} event - The originating click event on #progress-line-track.
+*/
 function handleProgressBarClick(event) {
     if (!activeBookObject || activeSpineArray.length === 0) return;
 
@@ -74,17 +81,20 @@ function handleProgressBarClick(event) {
     });
 }
 
-/*
-Word-weighted chapter boundary percentages (0-100), with a minimum enforced
-gap between adjacent boundaries so clusters of tiny front/back-matter
-chapters don't collapse into a single unreadable, unclickable point.
+/**
+ Word-weighted chapter boundary percentages (0-100), with a minimum enforced gap between
+ adjacent boundaries so clusters of tiny front/back-matter chapters don't collapse into a
+ single unreadable, unclickable point.
 
-boundaries[0] is always 0, boundaries[n] is always 100; boundaries[i] for
-0 < i < n is the tick position between chapter i-1 and chapter i.
+ boundaries[0] is always 0, boundaries[n] is always 100; boundaries[i] for 0 < i < n is the
+ tick position between chapter i-1 and chapter i.
 
-This is the single source of truth for the fill bar, the tick marks, AND
-click-to-chapter mapping - all three must read from the exact same
-boundaries or they'll visually disagree with each other.
+ This is the single source of truth for the fill bar, the tick marks, AND click-to-chapter
+ mapping - all three must read from the exact same boundaries or they'll visually disagree
+ with each other.
+
+ @returns {number[]} Array of length activeSpineArray.length + 1 with the boundary
+   percentages described above.
 */
 function computeChapterBoundaryPercents() {
     const n = activeSpineArray.length;
@@ -95,8 +105,8 @@ function computeChapterBoundaryPercents() {
     const chapterWordCounts = activeBookObject ? activeBookObject.chapterWordCounts : null;
     const useWeighted = Array.isArray(chapterWordCounts) && chapterWordCounts.length === n;
 
-    // Raw, word-weighted gap (% of the whole bar) per chapter. Falls back to
-    // uniform gaps under the same condition trackReadingProgress() used to.
+    // Raw, word-weighted gap (% of the whole bar) per chapter. Falls back to uniform gaps
+    // whenever chapterWordCounts is missing or its length doesn't match the spine.
     let rawGaps;
     if (useWeighted) {
         const totalWords = chapterWordCounts.reduce((sum, w) => sum + w, 0);
@@ -107,18 +117,18 @@ function computeChapterBoundaryPercents() {
         rawGaps = new Array(n).fill(100 / n);
     }
 
-    // Minimum visual gap, derived from the actual rendered bar width so it
-    // stays correct across screen sizes instead of being a fixed % guess.
+    // Minimum visual gap, derived from the actual rendered bar width so it stays correct
+    // across screen sizes instead of being a fixed % guess.
     const track = document.getElementById("progress-line-track");
     const trackWidthPx = track ? track.getBoundingClientRect().width : 0;
     const MIN_GAP_PX = Config.Miscellaneous.MIN_CHAPTER_TICK_GAP_PX || 4; // ~2x a thin tick marker
     const minGapPct = trackWidthPx > 0 ? (MIN_GAP_PX / trackWidthPx) * 100 : 0;
 
-    /* Boost any gap below the minimum up to the minimum, then shrink every
-     gap ABOVE the minimum proportionally to its own headroom above the minimum, to absorb exactly what was added.
-     So tiny clustered chapters spread out to a legible width, and every other chapter gives up a
-     little of its own space roughly in proportion to how much it can spare
-     rather than the adjustment dumping entirely onto whichever chapter happens to come right after the cluster. */
+    /*
+    Boosts any gap below the minimum up to the minimum, then shrinks every gap ABOVE the
+    minimum proportionally to its own headroom above the minimum, to absorb exactly what
+    was added.
+    */
     const flooredIdx = [];
     const headroomIdx = [];
     let excess = 0;
@@ -144,9 +154,10 @@ function computeChapterBoundaryPercents() {
             });
         } else {
             /*
-            Pathological case: even zeroing every non-floored chapter down to the minimum wouldn't free enough room
-            (minimum gap unreasonably large relative to chapter count / bar width).
-            Falls back to plain uniform spacing rather than producing a distorted layout.
+            Pathological case: even zeroing every non-floored chapter down to the minimum
+            wouldn't free enough room (minimum gap unreasonably large relative to chapter
+            count / bar width). Falls back to plain uniform spacing rather than producing
+            a distorted layout.
             */
             for (let i = 0; i <= n; i++) boundaries[i] = (100 / n) * i;
             return boundaries;
@@ -164,40 +175,36 @@ function computeChapterBoundaryPercents() {
 
 function trackReadingProgress() {
     // If a book failed to parse (or hasn't loaded yet) activeSpineArray can be empty,
-    // which would otherwise make chapterWeight = 100 / 0 = Infinity and turn the progress displays into "NaN%" below.
+    // which would otherwise make chapterWeight = 100 / 0 = Infinity and turn the progress
+    // displays into "NaN%" below.
     if (activeSpineArray.length === 0) return;
 
     const container = document.getElementById("reader-container");
     const top = container.scrollTop;
 
     /*
-    The end-of-chapter banner increases scrollHeight after the user reaches
-    the bottom, causing maxScroll to grow and preventing 100% progress.
-    Subtracting the banner height keeps the denominator based on actual chapter
-    content instead of the added UI element.
+    The end-of-chapter banner increases scrollHeight after the user reaches the bottom,
+    causing maxScroll to grow and preventing 100% progress. Subtracting the banner height
+    keeps the denominator based on actual chapter content instead of the added UI element.
     */
     const banner = document.getElementById("chapter-end-action-banner");
     const bannerHeight = banner ? banner.offsetHeight : 0;
     const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight - bannerHeight);
 
-    // 1. CALCULATE STANDALONE CHAPTER METRICS
-    // Determine the exact position inside the active single text node
+    // 1. Chapter-local progress
     const innerPct = maxScroll > 0 ? Math.min(1, top / maxScroll) : 1;
     const chapterProgressPercentage = Math.round(innerPct * 100);
 
-    // Inject immediately into your new chapter metrics indicator label
     const chapterPctDisplay = document.getElementById("chapter-percentage-display");
     if (chapterPctDisplay) {
         chapterPctDisplay.innerText = `${chapterProgressPercentage}%`;
     }
 
-    // 2. CALCULATE GLOBAL FULL-BOOK METRICS
-     /* 2. CALCULATE GLOBAL FULL-BOOK METRICS
-    bookScalePct comes from the same boundary positions the progress bar's ticks and click handling use
-    (computeChapterBoundaryPercents(), further down this file), instead of recomputing word-weighting independently here.
-    That helper already covers: falling back to uniform weighting when chapterWordCounts is missing or its length doesn't match the spine,
-    enforcing a minimum visual gap between chapter ticks, and falling back further to plain uniform spacing if even that minimum gap isn't feasible.
-    Keeping the fill bar on the exact same boundaries as the ticks means the fill can never visually disagree with where the ticks say each chapter starts.
+    /*
+    2. Whole-book progress
+    bookScalePct comes from the same boundary positions the progress bar's ticks and click
+    handling use (computeChapterBoundaryPercents(), further down this file), instead of
+    recomputing word-weighting independently here. 
     */
     const chapterBoundaries = computeChapterBoundaryPercents();
     const bookScalePct = chapterBoundaries[activeSpinePointer] + innerPct * (chapterBoundaries[activeSpinePointer + 1] - chapterBoundaries[activeSpinePointer]);
@@ -210,43 +217,42 @@ function trackReadingProgress() {
 
     lastKnownBookScalePct = bookScalePct;
 
-    // 3. BACKGROUND MAINTENANCE TASKS
+    // 3. Background maintenance
     if (top < maxScroll - 10) {
         overscrollCounter = 0;
     }
 
-    // Fire next chapter call invitation block if hitting the final layout stretch
+    // Show the end-of-chapter banner once scrolled past 95%
     if (innerPct >= 0.95 && !document.getElementById("chapter-end-action-banner")) {
         injectChapterEndBanner();
     }
 
-    // Once the reader has genuinely scrolled to the bottom of the last chapter
-    // (innerPct can now actually reach 1 since the banner is excluded above),
-    // mark the book as finished so stats/library views stop showing it as in-progress.
+    // Once the reader has genuinely scrolled to the bottom of the last chapter (innerPct
+    // can now actually reach 1 since the banner is excluded above), mark the book as
+    // finished so stats/library views stop showing it as in-progress.
     const isLastChapter = activeSpinePointer >= activeSpineArray.length - 1;
     if (isLastChapter && innerPct >= 1 && activeBookObject && !activeBookObject.isRead) {
         markBookAsRead(activeBookObject.id);
     }
 
-    // Commit current positions background states mutations to IndexedDB
+    // Persist current position to IndexedDB
     if (activeBookObject) {
     /*
-    Normally cloud pushes are throttled to avoid Firestore writes from
-    scroll-driven updates. Chapter changes bypass the throttle because they are
-    rarer and more important to preserve immediately.
-    Without this, closing the tab before the next throttle window could lose a
-    meaningful chapter progress update.
+    Normally cloud pushes are throttled to avoid Firestore writes from scroll-driven
+    updates. Chapter changes bypass the throttle because they are rarer and more
+    important to preserve immediately. Without this, closing the tab before the next
+    throttle window could lose a meaningful chapter progress update.
     */
         const chapterHasChangedSinceLastPush = lastPushedChapterIndex !== activeSpinePointer;
         updateBookProgressInDB(activeBookObject.id, activeSpinePointer, top, chapterHasChangedSinceLastPush);
         if (chapterHasChangedSinceLastPush) {
             lastPushedChapterIndex = activeSpinePointer;
             /*
-             A chapter change is one of the moments the reading-history
-             calendar (see 13-reading-history.js) wants flushed right away:
-             it both widens the open segment's chapterStart/chapterEnd range
-             to include the newly-reached chapter, and persists that segment
-             immediately rather than waiting for the next periodic save.
+             A chapter change is one of the moments the reading-history calendar (see
+             13-reading-history.js) wants flushed right away: it both widens the open
+             segment's chapterStart/chapterEnd range to include the newly-reached
+             chapter, and persists that segment immediately rather than waiting for
+             the next periodic save.
             */
             if (typeof recordHistoryChapterVisited === "function") {
                 recordHistoryChapterVisited(activeSpinePointer);
@@ -285,7 +291,7 @@ async function stepToPrevChapter() {
 }
 
 // =================================================================
-// PERSISTENT CONFIGURATION STORAGE LAYER
+// SAVED SETTINGS
 // =================================================================
 function loadSavedUserInterfaceSettings() {
     const config = getUserConfig();
@@ -305,10 +311,10 @@ function loadSavedUserInterfaceSettings() {
         if (overrideCheckbox) {
             overrideCheckbox.checked = !!config.colorOverrideEnabled;
             if (config.fontColor) document.getElementById("setting-font-color").value = config.fontColor;
-            handleColorOverrideToggle(false); // Update interaction wrapper opacity states silently
+            handleColorOverrideToggle(false); // Update wrapper opacity without re-applying styles
         }
 
-        // Sync card metrics scales layout constraints if exists
+        // Sync card size if saved
         if (config.cardSize) {
             const cardSizeInput = document.getElementById("setting-card-size");
             if (cardSizeInput) {
@@ -317,10 +323,10 @@ function loadSavedUserInterfaceSettings() {
             }
         }
 
-        // Restore the Sort Books by Group Order checkbox. Only sets the checkbox state here -
+        // Restore the Sort Books by Group Order checkbox. Only sets the checkbox state here
         // loadedBooksMemory/loadedGroupsMemory aren't populated yet at this point in startup
-        // (fetchLocalLibrary() hasn't resolved), so the setting takes visible effect the first
-        // time renderLibraryGrid()/showStatsViewState() run once data actually loads, not here.
+        // (fetchLocalLibrary() hasn't resolved), so the setting takes visible effect the first time renderLibraryGrid()/showStatsViewState()
+        // run once data actually loads, not here.
         const groupOrderedSortingCheckbox = document.getElementById("setting-group-ordered-sorting");
         if (groupOrderedSortingCheckbox) {
             groupOrderedSortingCheckbox.checked = !!config.groupOrderedSorting;
@@ -336,28 +342,43 @@ function loadSavedUserInterfaceSettings() {
             });
         }
     } catch (e) {
-        console.warn("Failed hydrating interface parameters configurations profiles", e);
+        console.warn("Failed to load saved interface settings", e);
     }
 }
 
 // =================================================================
-// OPTIONAL READER HEADER BUTTON VISIBILITY (Settings > Reader UI Buttons)
+// OPTIONAL READER HEADER BUTTONS (Settings > Reader UI Buttons)
 // =================================================================
 /*
- Only buttons that aren't required for core functionality are toggleable
- here (chapter navigation, contents, stats, notes, themes) - things like
- the Library button or Toggle Scroll aren't included since hiding them
- would strand the user with no way back to their library or no way to
- use a core reading feature.
+ Only buttons that aren't required for core functionality are toggleable here
+ (chapter navigation, contents, stats, notes, themes)
+ things like the Library button or Toggle Scroll aren't included
+ since hiding them would strand the user with no way back to their
+ library or no way to use a core reading feature.
 */
 const READER_BUTTON_ELEMENT_MAP = Config.Miscellaneous.READER_BUTTON_ELEMENT_MAP;
 
+/**
+ Change handler for a reader header button's visibility checkbox in Settings. Applies the
+ visibility change immediately and persists it for future sessions.
+
+ @param {string} key - Key into READER_BUTTON_ELEMENT_MAP identifying which reader button
+   this checkbox controls.
+ @param {boolean} isChecked - Current checkbox state; checked means visible.
+*/
 function handleReaderButtonToggle(key, isChecked) {
     const shouldHide = !isChecked;
     applyReaderButtonVisibility(key, shouldHide);
     persistReaderButtonVisibilitySetting(key, shouldHide);
 }
 
+/**
+ Shows or hides a single optional reader header button in the DOM.
+
+ @param {string} key - Key into READER_BUTTON_ELEMENT_MAP identifying which reader button
+   to toggle.
+ @param {boolean} shouldHide - True to hide the button, false to show it.
+*/
 function applyReaderButtonVisibility(key, shouldHide) {
     const elementId = READER_BUTTON_ELEMENT_MAP[key];
     const el = elementId ? document.getElementById(elementId) : null;
@@ -365,6 +386,14 @@ function applyReaderButtonVisibility(key, shouldHide) {
     el.classList.toggle("ui-btn-hidden", shouldHide);
 }
 
+/**
+ Persists a single reader button's hidden/visible state into the saved user config, merging
+ into the existing hiddenReaderButtons map rather than replacing it.
+
+ @param {string} key - Key into READER_BUTTON_ELEMENT_MAP identifying which reader button
+   this setting applies to.
+ @param {boolean} isHidden - True if the button should be hidden on future loads.
+*/
 function persistReaderButtonVisibilitySetting(key, isHidden) {
     const config = getUserConfig();
     if (!config.hiddenReaderButtons) config.hiddenReaderButtons = {};
@@ -373,7 +402,6 @@ function persistReaderButtonVisibilitySetting(key, isHidden) {
 }
 
 function saveAndApplyUserStyles() {
-    // 1. Gather all interface metric parameters
     const font = document.getElementById("setting-font-family").value;
     const size = document.getElementById("setting-font-size").value;
     const lineSpacing = document.getElementById("setting-line-spacing").value;
@@ -384,10 +412,9 @@ function saveAndApplyUserStyles() {
     const scrollSpeed = document.getElementById("setting-scroll-delay").value;
     const cardSize = document.getElementById("setting-card-size")?.value || "160";
 
-    // 2. Merge into whatever config is already saved (rather than replacing
-    //    it outright), so unrelated saved settings - like cardSize or the
-    //    hiddenReaderButtons toggles below - don't get silently wiped out
-    //    every time a font/style control changes.
+    // Merges into whatever config is already saved (rather than replacing it outright),
+    // so unrelated saved settings - like cardSize or the hiddenReaderButtons toggles
+    // below - don't get silently wiped out every time a font/style control changes.
     saveUserConfig({
         fontFamily: font,
         fontSize: size,
@@ -400,7 +427,6 @@ function saveAndApplyUserStyles() {
         cardSize: cardSize
     });
 
-    // 3. Bind UI configurations down onto the text render frames context viewport
     document.getElementById("lbl-font-size").innerText = size;
     document.getElementById("lbl-line-spacing").innerText = lineSpacing;
     document.getElementById("lbl-margins").innerText = margin;
@@ -414,10 +440,8 @@ function saveAndApplyUserStyles() {
     frame.style.fontSize = `${size}px`;
     frame.style.lineHeight = lineSpacing;
 
-    // --- APPLY PARAGRAPH SPACING OVERRIDES ---
-    // Inject bottom margin padding values dynamically into paragraphs (skipping the banner)
+    // Paragraph spacing: inject bottom margin into paragraphs, skipping the end banner
     frame.querySelectorAll("p, div:not(#chapter-end-action-banner), blockquote").forEach(el => {
-        // Skip elements inside the end banner entirely
         if (el.closest("#chapter-end-action-banner")) return;
 
         if (el.textContent.trim().length > 0) {
@@ -425,10 +449,8 @@ function saveAndApplyUserStyles() {
             el.style.marginTop = "0px";
         }
     });
-    // ------------------------------------------
 
-    // --- SAFE OVERRIDE COLOR CHECK CODES ---
-    // Target all elements EXCEPT the chapter end banner and its contents
+    // Color override: target every element except the chapter end banner and its contents
     const targetElements = frame.querySelectorAll("*:not(#chapter-end-action-banner):not(#chapter-end-action-banner *)");
 
     if (colorOverrideEnabled) {
@@ -447,6 +469,13 @@ function saveAndApplyUserStyles() {
     }
 }
 
+/**
+ Change handler for the "Override Text Color" setting checkbox. Updates the color picker's
+ enabled/disabled appearance and, by default, reapplies reader styles immediately.
+ @param {boolean} [shouldTriggerReapply=true] - Pass false to update only the wrapper's
+   enabled/disabled appearance without re-running saveAndApplyUserStyles() - used during
+   initial settings hydration, before styles are meant to apply yet.
+*/
 function handleColorOverrideToggle(shouldTriggerReapply = true) {
     const isEnabled = document.getElementById("setting-enable-color-override").checked;
     const wrapper = document.getElementById("color-picker-wrapper");
@@ -461,8 +490,12 @@ function handleColorOverrideToggle(shouldTriggerReapply = true) {
     }
 }
 
-
-
+/**
+ Opens the given reader sidebar, closing any other open sidebar first since only one
+ sidebar panel is meant to be visible at a time. Closes it instead if it's already open.
+ @param {string} id - Element id of the sidebar to toggle (e.g. "settings-sidebar",
+   "toc-sidebar").
+*/
 function toggleSidebar(id) {
     const bar = document.getElementById(id);
     const isOpen = bar.classList.contains("active");
@@ -472,11 +505,12 @@ function toggleSidebar(id) {
     if (!isOpen) bar.classList.add("active");
 }
 
-/*
- Settings is accessible from both library and reader views because it now
- lives outside #reader-view. The content stays identical; only section
- ordering changes so reader settings are prioritized while reading and
- placed after library settings from the library view.
+/**
+ Settings is accessible from both library and reader views because it lives outside
+ #reader-view. The content stays identical; only section ordering changes so reader
+ settings are prioritized while reading and placed after library settings from the library view.
+ @param {string} context - "reader" to show reader settings first, anything else to show
+   library settings first (the default library-view ordering).
 */
 function openSettingsPanel(context) {
     const sidebar = document.getElementById("settings-sidebar");
@@ -494,14 +528,19 @@ function openSettingsPanel(context) {
     toggleSidebar("settings-sidebar");
 }
 
+/**
+ Applies a reader/library color theme by setting the document's data-theme attribute,
+ which the CSS theme rules key off of.
+ @param {string} themeKey - Theme identifier matching a `[data-theme="..."]` CSS ruleset.
+*/
 function changeActiveTheme(themeKey) {
     document.documentElement.setAttribute("data-theme", themeKey);
 }
 
-// =================================================================
-// END-OF-CHAPTER "NEXT CHAPTER" BANNER
-// Triggered by trackReadingProgress() once scrolled past 95% of a chapter.
-// =================================================================
+/** 
+End-Of-Chapter "Next Chapter" Banner
+Triggered by trackReadingProgress() once scrolled past 95% of a chapter.
+*/
 function injectChapterEndBanner() {
     const frame = document.getElementById("text-render-frame");
     if (!frame || document.getElementById("chapter-end-action-banner")) return;

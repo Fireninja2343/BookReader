@@ -1,5 +1,5 @@
 // =================================================================
-// SELECTION DRIVERS & INTERFACE LAYOUT RENDERER
+// LIBRARY GRID RENDERING
 // =================================================================
 function renderLibraryGrid() {
   const container = document.getElementById("grid-container");
@@ -7,11 +7,10 @@ function renderLibraryGrid() {
   selectedBookIds = [];
   lastSelectedBookId = null;
 
-  // SCENARIO 1: VIEW GROUPS AND UNASSIGNED SECTIONS (DEFAULT HIERARCHY)
+  // Grouped view, showing group folders + unassigned books
   if (globalLibraryViewMode === "grouped" && activeGroupFilterId === null) {
-    // Render Group Folders First, ordered by sortOrder so drag-and-drop/placement-number
-    // reordering (see 03-groups.js) is actually reflected on screen instead of groups
-    // always appearing in raw fetch order.
+    // Ordered by sortOrder so drag-and-drop/placement-number reordering (03-groups.js)
+    // is reflected on screen instead of groups appearing in raw fetch order.
     const sortedGroups = getGroupsSortedByPlacement();
     sortedGroups.forEach((group) => {
       const card = document.createElement("div");
@@ -21,15 +20,13 @@ function renderLibraryGrid() {
 
       card.addEventListener("dragstart", (e) => handleGroupDragStart(e, group.id));
       card.addEventListener("dragend", handleGroupDragEnd);
-      // Always allow the drop regardless of drag type: book drags (moving books INTO
-      // this group) and group-reorder drags both need dropping enabled on this element.
+      // Drop is always enabled here: book drags (move INTO this group) and group-reorder drags both need it.
       card.addEventListener("dragover", (e) => e.preventDefault());
       card.addEventListener("drop", (e) => {
         /*
-        Both "drag a book card onto a group" (existing behavior, moves the book into
-        that group) and "drag a group card onto another group" (new behavior, reorders
-        groups) land on this same element's drop event, distinguished by the
-        dataTransfer marker each drag type sets - see 05-drag-drop.js's
+        A book card dropped here (moves the book into this group) and a group card
+        dropped here (reorders groups) both land on this same drop event, distinguished
+        by the dataTransfer marker each drag type sets - see 05-drag-drop.js's
         handleCardDragStart ("grouped-cards") vs 03-groups.js's handleGroupDragStart
         ("grouped-groups").
         */
@@ -53,21 +50,16 @@ function renderLibraryGrid() {
       container.appendChild(card);
     });
 
-    // Filter rendering scope to show ONLY standalone files with no group tags attached
+    // Standalone books with no group
     const unassignedBooks = loadedBooksMemory.filter((b) => !b.groupId);
     buildBookCardsInLayout(unassignedBooks, container);
 
-    // SCENARIO 2: INSIDE A SPECIFIC SUB-GROUP COMPONENT FOLDER MODE
-  } else if (
-    globalLibraryViewMode === "grouped" &&
-    activeGroupFilterId !== null
-  ) {
-    const structuralGroupContextBooks = loadedBooksMemory.filter(
-      (b) => b.groupId === activeGroupFilterId,
-    );
-    buildBookCardsInLayout(structuralGroupContextBooks, container);
+    // Inside a single group's folder
+  } else if (globalLibraryViewMode === "grouped" && activeGroupFilterId !== null) {
+    const groupBooks = loadedBooksMemory.filter((b) => b.groupId === activeGroupFilterId);
+    buildBookCardsInLayout(groupBooks, container);
 
-    // SCENARIO 3: FLAT GLOBAL LISTING - ALL BOOKS DISPLAYED REGARDLESS OF GROUPS
+    // Flat "All Books" view, ignoring groups
   } else if (globalLibraryViewMode === "all") {
     buildBookCardsInLayout(getBooksInDisplayOrder(), container);
     if (document.getElementById("setting-group-ordered-sorting")?.checked
@@ -77,6 +69,13 @@ function renderLibraryGrid() {
   }
 }
 
+/**
+ Populates a group card's DOM with a preview grid of up to 4 book covers, plus a title and
+ Edit/Delete action buttons.
+
+ @param {HTMLElement} card - The group card element to populate.
+ @param {Object} group - Group record backing this card.
+*/
 function buildGroupCardContents(card, group) {
   const groupBooks = loadedBooksMemory
     .filter((book) => book.groupId === group.id)
@@ -139,21 +138,23 @@ function buildGroupCardContents(card, group) {
   card.appendChild(metaContainer);
 }
 
-/*
+/**
  Draws a rounded "bubble" outline around each group's cluster of book cards in the flat
- "All Books" view, only shown while Sort Books by Group Order is active in Manual sort mode
- (see getBooksInDisplayOrder()). Purely visual - it doesn't change card layout or DOM
- structure, just measures where each group's cards actually landed after the grid laid
- them out and draws a positioned outline behind them.
+ "All Books" view, shown only while Sort Books by Group Order is active in Manual sort
+ mode (see getBooksInDisplayOrder()). Purely visual - it doesn't change card layout or
+ DOM structure, just measures where each group's cards landed after the grid laid them
+ out and draws a positioned outline behind them.
 
- A group's cards can wrap across multiple rows in arbitrary shapes (e.g. 3 full rows plus
- a half row, or an L-shape if other groups' cards interleave visually), so a single
- rectangular bounding box is wrong - it would cover unrelated cards. Instead this clusters
- the group's cards into rows by their rendered top position, builds one rect per row, then
- stitches the rows into a single continuous "staircase" polygon (rows are extended to meet
- exactly at the midpoint of any gap between them) and rounds every vertex of that polygon.
- This is the same general technique browsers use to draw a rounded highlight behind
- multi-line wrapped text.
+ A group's cards can wrap across multiple rows in arbitrary shapes
+ (e.g. 3 full rows plus a half row, or an L-shape if other groups' cards interleave)
+ so a single rectangular bounding box is wrong - it would cover unrelated cards. Instead this clusters the
+ group's cards into rows by their rendered top position, builds one rect per row,
+ then stitches the rows into a single "staircase" polygon (rows extended to meet exactly at
+ the midpoint of any gap between them) and rounds every vertex of that polygon.
+ This is the same technique browsers use to draw a rounded highlight behind multi-line text.
+
+ @param {HTMLElement} container - Grid container the book cards are already rendered
+   into; outlines are measured against its bounding rect and inserted as its first child.
 */
 function renderGroupBubbleOutlines(container) {
   document.querySelectorAll(".group-bubble-outline").forEach((el) => el.remove());
@@ -214,14 +215,23 @@ function renderGroupBubbleOutlines(container) {
   });
 
   // Inserted as the FIRST child (not appended) so plain DOM paint order puts it behind
-  // every book card, without relying on z-index / stacking-context tricks that can fail
-  // depending on what stacking context the container itself ends up establishing.
+  // every book card, without relying on z-index/stacking-context tricks that can fail
+  // depending on the container's own stacking context.
   container.insertBefore(svg, container.firstChild);
 }
 
-// Groups a flat list of card rects into visual rows (cards whose tops are close together),
-// then pads each row and stretches adjacent rows to meet exactly at the midpoint of any
-// gap between them, so the rows form one seamless vertical stack with no visual gaps.
+/**
+ Groups a flat list of card rects into visual rows (cards whose tops are close together),
+ then pads each row and stretches adjacent rows to meet exactly at the midpoint of any
+ gap between them, so the rows form one seamless vertical stack with no visual gaps.
+
+ @param {Array<{left: number, right: number, top: number, bottom: number}>} cardRects -
+   Card bounding rects, relative to the outline container.
+ @param {number} padding - Pixels to expand each row's rect by on every side before rows
+   are stretched to meet.
+ @returns {Array<{left: number, right: number, top: number, bottom: number}>} Row rects,
+   sorted top to bottom, with no vertical gaps between consecutive rows.
+*/
 function clusterCardsIntoRows(cardRects, padding) {
   const ROW_TOLERANCE_PX = 10; // cards in the same visual row should have nearly-identical tops
   const sorted = [...cardRects].sort((a, b) => a.top - b.top);
@@ -254,9 +264,16 @@ function clusterCardsIntoRows(cardRects, padding) {
   return rows;
 }
 
-// Builds an SVG path tracing the outline of a vertically-stacked set of row rects (each
-// row possibly a different width), producing a "staircase" polygon rather than a single
-// bounding rectangle, with every corner (convex or concave) rounded.
+/**
+ Builds an SVG path tracing the outline of a vertically-stacked set of row rects (each
+ row possibly a different width), producing a "staircase" polygon rather than a single
+ bounding rectangle, with every corner (convex or concave) rounded.
+
+ @param {Array<{left: number, right: number, top: number, bottom: number}>} rows - Row
+   rects from clusterCardsIntoRows(), sorted top to bottom.
+ @param {number} radius - Corner rounding radius passed through to roundedPolygonPath().
+ @returns {string} SVG path `d` attribute value, or an empty string if rows is empty.
+*/
 function buildRowStaircasePath(rows, radius) {
   if (rows.length === 0) return "";
 
@@ -275,11 +292,20 @@ function buildRowStaircasePath(rows, radius) {
   return roundedPolygonPath([...rightPts, ...leftPts], radius);
 }
 
-// Generic rounded-corner polygon path builder: given an ordered, closed list of vertices,
-// cuts each corner in by min(radius, half the shorter adjacent edge) and rounds it with a
-// quadratic curve through the original vertex. Works uniformly for convex and concave
-// corners, which is what lets the staircase shape above look like one soft continuous
-// bubble instead of a jagged outline.
+/**
+ Generic rounded-corner polygon path builder: given an ordered, closed list of vertices,
+ cuts each corner in by min(radius, half the shorter adjacent edge) and rounds it with a
+ quadratic curve through the original vertex. Works uniformly for convex and concave
+ corners, which is what lets the staircase shape above look like one soft continuous
+ bubble instead of a jagged outline.
+
+ @param {Array<{x: number, y: number}>} points - Ordered, closed polygon vertices
+   (consecutive duplicates are deduped internally).
+ @param {number} radius - Maximum corner rounding radius; shrunk per-corner when an
+   adjacent edge is too short to support it.
+ @returns {string} SVG path `d` attribute value, or an empty string if fewer than 3
+   distinct vertices remain after deduping.
+*/
 function roundedPolygonPath(points, radius) {
   const deduped = points.filter((p, i) => {
     const prev = points[(i - 1 + points.length) % points.length];
@@ -309,14 +335,20 @@ function roundedPolygonPath(points, radius) {
   return d + "Z";
 }
 
-// Sub-routine utility helper to pack structural card wrappers on the grid DOM
+/**
+ Packs book cards into the grid DOM for the given list of books.
+
+ @param {Array<Object>} booksScopingContextArray - Books to render, in display order;
+   also passed through to click handling so multi-select ranges (shift-click) are scoped
+   to this same list rather than the full library.
+ @param {HTMLElement} targetDOMContainer - Container to append the generated card
+   elements to.
+*/
 function buildBookCardsInLayout(booksScopingContextArray, targetDOMContainer) {
   booksScopingContextArray.forEach((book) => {
     const card = document.createElement("div");
     card.className = "book-card";
     card.setAttribute("draggable", "true");
-
-    // REAL ID instead of index
     card.dataset.bookId = book.id;
 
     // Tint book cards while browsing inside a group folder
@@ -326,9 +358,9 @@ function buildBookCardsInLayout(booksScopingContextArray, targetDOMContainer) {
         `color-mix(in srgb, ${activeGroupFilterColor} 75%, var(--bg-card))`,
       );
     } else if (globalLibraryViewMode === "all" && book.groupId) {
-      // In the flat "All Books" view there's no single active group to
-      // borrow a color from (books from every group are mixed together),
-      // so look up each card's own group color individually.
+      // Flat "All Books" view has no single active group to borrow a color from
+      // (books from every group are mixed together), so look up each card's own
+      // group color individually.
       const ownGroup = loadedGroupsMemory.find((g) => g.id === book.groupId);
       if (ownGroup && ownGroup.backgroundColor) {
         card.style.setProperty(
@@ -382,7 +414,11 @@ function buildBookCardsInLayout(booksScopingContextArray, targetDOMContainer) {
   });
 }
 
-// Stamps a book as opened just now, persists it, then launches the reader
+/**
+ Stamps a book as opened just now, persists it, then launches the reader.
+
+ @param {Object} book - Book record to open; mutated in place with a fresh lastOpenedDate.
+*/
 function openBookAndTrackLastRead(book) {
   book.lastOpenedDate = Date.now();
 
@@ -394,9 +430,11 @@ function openBookAndTrackLastRead(book) {
   launchEpubReader(book);
 }
 
-// Opens the currently selected book from grid selection, separate from the
-// double-click shortcut. Used by #btn-open-book, which appears only when
-// exactly one book is selected (see handleGridCardClick).
+/**
+ Opens the currently selected book from grid selection, separate from the
+ double-click shortcut. Used by #btn-open-book, which appears only when
+ exactly one book is selected (see handleGridCardClick).
+*/
 function openSelectedBook() {
   if (selectedBookIds.length !== 1) return;
   const book = loadedBooksMemory.find((b) => b.id === selectedBookIds[0]);
@@ -417,6 +455,17 @@ function openLastReadBook() {
   openBookAndTrackLastRead(candidate);
 }
 
+/**
+ Click handler for a .book-card element, covering single-select, shift-click range select,
+ and the double-click open shortcut.
+
+ @param {MouseEvent} event - The originating click event; event.detail distinguishes
+   single vs double clicks, and event.shiftKey triggers range selection.
+ @param {number} bookId - id of the book card that was clicked.
+ @param {Array<Object>} scopingArrayContext - The book list currently on screen (e.g. a
+   single group's books, or the full library), used both to resolve bookId to a record and
+   to scope shift-click range selection to only the cards actually visible.
+*/
 function handleGridCardClick(event, bookId, scopingArrayContext) {
   event.stopPropagation();
 
@@ -469,18 +518,18 @@ function handleGridCardClick(event, bookId, scopingArrayContext) {
   }
 }
 
-/*
- Books in the order the library/stats views should actually display, accounting for the
- "Sort Books by Group Order" setting (see applyLibraryInterfaceSettings()).
+/**
+ Books in the order the library/stats views should display, accounting for the "Sort
+ Books by Group Order" setting (see applyLibraryInterfaceSettings()).
 
- Alphabetical/Date Imported sort modes always override group ordering per user preference,
- since those are explicit whole-library sorts the user picked - group order only applies
- in Manual mode, and only when the setting is on. When both conditions hold, books are
- listed group-by-group (following each group's own sortOrder), each group's books kept in
- their own manual order, with ungrouped books appended last in their own manual order.
+ Alphabetical/Date Imported sort modes always override group ordering, since those are
+ explicit whole-library sorts the user picked - group order only applies in Manual mode,
+ and only when the setting is on. When both hold, books are listed group-by-group
+ (following each group's own sortOrder), each group's books in their own manual order,
+ with ungrouped books appended last in their own manual order.
 
- Returns loadedBooksMemory itself (not a copy) whenever grouping isn't applied, since
- callers only read from the result - they don't need copy-on-read semantics here.
+ @returns {Array<Object>} Books in display order. Returns loadedBooksMemory itself (not a
+   copy) whenever grouping isn't applied, since callers only read from the result.
 */
 function getBooksInDisplayOrder() {
     const sortMode = document.getElementById("sort-selector")?.value;
@@ -505,7 +554,6 @@ function getBooksInDisplayOrder() {
     return ordered;
 }
 
-// Tracks sorting criteria options modifications
 function sortLibrary() {
   const mode = document.getElementById("sort-selector").value;
   if (mode === "alpha") {
@@ -529,5 +577,4 @@ function applyLibraryInterfaceSettings() {
     const groupOrderedSorting = !!document.getElementById("setting-group-ordered-sorting")?.checked;
     saveUserConfig({ cardSize: size, groupOrderedSorting });
     renderLibraryGrid();
-    
 }

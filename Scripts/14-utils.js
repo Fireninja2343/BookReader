@@ -1,7 +1,7 @@
 // =================================================================
 // READING STATUS - shared classification (stats table + Timeline Gantt mode)
 // =================================================================
-/*
+/**
  Status flow:
  notStarted -> inProgress -> (paused <-> inProgress)* -> completed.
 
@@ -18,9 +18,10 @@ const READING_STATUS_LABELS = {
     [READING_STATUS.NOT_STARTED]: "⬜ Not Started",
 };
 
-// Timestamp of the most recent real activity, or null. Prefers
-// readingSessions/readingHistory over the coarser lastOpened, which
-// updates the instant the reader opens even with zero real reading.
+/**
+ Timestamp of the most recent real activity, or null.  
+ Prefers readingSessions/readingHistory over the coarser lastOpened, which updates the instant the reader opens even with zero real reading.
+ */
 function getLastRealReadingActivityTimestamp(book) {
     let latest = null;
 
@@ -43,14 +44,16 @@ function getLastRealReadingActivityTimestamp(book) {
     return latest;
 }
 
-// True if the book has at least one recorded real reading session/segment.
+/** True if the book has at least one recorded real reading session/segment. */
 function hasRealReadingActivity(book) {
     return (Array.isArray(book.readingSessions) && book.readingSessions.length > 0)
         || (Array.isArray(book.readingHistory) && book.readingHistory.length > 0);
 }
 
-// Main classifier. `now` is a parameter so a caller classifying a whole
-// list at once can use one consistent timestamp instead of many.
+/**
+ Main classifier. `now` is a parameter so a caller classifying a whole list at once can use one consistent
+ timestamp instead of many.
+ */
 function getBookReadingStatus(book, now = Date.now()) {
     if (book.isRead) return READING_STATUS.COMPLETED;
     if (!hasRealReadingActivity(book)) return READING_STATUS.NOT_STARTED;
@@ -69,8 +72,7 @@ function getBookReadingStatus(book, now = Date.now()) {
 // =================================================================
 // SHARED STORAGE / DB HELPERS
 // =================================================================
-// Read/write helpers for the EpubReader_UserConfig_v1 localStorage blob.
-// saveUserConfig() merges its patch into whatever's already saved.
+/** Read/write helpers for the `USER_CONFIG_STORAGE_KEY` localStorage blob. */
 function getUserConfig() {
   const raw = localStorage.getItem(Config.Db.USER_CONFIG_STORAGE_KEY);
   if (!raw) return {};
@@ -82,23 +84,33 @@ function getUserConfig() {
   }
 }
 
+/** Merges patch into whatever's already saved. */
 function saveUserConfig(patch) {
   const config = Object.assign(getUserConfig(), patch);
   localStorage.setItem(Config.Db.USER_CONFIG_STORAGE_KEY, JSON.stringify(config));
   return config;
 }
 
-// Wraps an IndexedDB store.getAll() in a Promise.
+/**
+ Wraps an IndexedDB store.getAll() in a Promise.
+
+ @param {IDBObjectStore} store - The IndexedDB object store instance to read from.
+ @returns {Promise<Array<*>>} A promise that resolves to an array of all records in the store.
+ */
 function getAllFromStore(store) {
   return new Promise((resolve) => {
     store.getAll().onsuccess = (e) => resolve(e.target.result);
   });
 }
 
-// Same as above but opens its own readonly transaction from a store name -
-// for callers (sync/backup code) that don't already have a store handle,
-// and that may run before loadedBooksMemory/loadedGroupsMemory etc. are
-// populated for the first time, so reading IndexedDB directly matters.
+/**
+ Same as getAllFromStore() but opens its own readonly transaction from a store name, for callers (sync/backup code) that
+ don't already have a store handle and may run before loadedBooksMemory/loadedGroupsMemory etc. are populated
+ for the first time.
+
+ @param {string} storeName - The name of the IndexedDB object store to fetch records from.
+ @returns {Promise<Array<*>>} A promise that resolves to an array of all records, or empty array if empty/undefined.
+ */
 function getAllFromLocalStore(storeName) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([storeName], "readonly");
@@ -107,12 +119,17 @@ function getAllFromLocalStore(storeName) {
     req.onerror = () => reject(req.error);
   });
 }
-/*
- Stamps lastModified after a successful cloud push and mirrors the value
- into the matching in-memory cache entry when available.
- Shared by group, note, and note-tag sync helpers. Missing cache arrays are
- safely ignored when the data has not been loaded yet.
-*/
+/**
+ Stamps lastModified after a successful cloud push and mirrors the value into the matching in-memory cache
+ entry when available. Shared by group, note, and note-tag sync helpers. Missing cache arrays are safely
+ ignored when the data has not been loaded yet.
+
+ @param {string} storeName - The name of the IndexedDB object store.
+ @param {Array<Object>|null} cacheArray - The in-memory array cache to update, or null if not loaded.
+ @param {string|number} recordId - The unique identifier of the record to stamp.
+ @param {number} lastModified - The timestamp (milliseconds) to set as lastModified.
+ @returns {Promise<void>} A promise that resolves when the database transaction completes or handles an error.
+ */
 function stampLocalRecordLastModified(storeName, cacheArray, recordId, lastModified) {
   if (!db) return Promise.resolve();
   return new Promise((resolve) => {
@@ -132,11 +149,12 @@ function stampLocalRecordLastModified(storeName, cacheArray, recordId, lastModif
   });
 }
 
-/*
- Opens an EPUB zip's META-INF/container.xml to find the OPF path, then
- parses that OPF. Returns {opfDoc, opfPath, baseDir} - baseDir is opfPath's
- directory (trailing slash included), used to resolve manifest/spine hrefs.
-*/
+/**
+  Opens an EPUB zip's META-INF/container.xml to find the OPF path, then parses that OPF.
+  @param {import('jszip')} zip - The JSZip instance containing the loaded EPUB file.
+  @returns {Promise<{opfDoc: Document, opfPath: string, baseDir: string}>}
+  An object containing the parsed OPF XML document, its path, and its base directory (with trailing slash).
+ */
 async function openEpubContainer(zip) {
   const containerFile = await zip.file("META-INF/container.xml").async("string");
   const parser = new DOMParser();
@@ -148,11 +166,14 @@ async function openEpubContainer(zip) {
   return { opfDoc, opfPath, baseDir };
 }
 
-/*
- Loads a book record, mutates it via mutateFn (in place), persists it, and
- pushes to the cloud. Always stamps lastModified. Resolves to the updated
- record, or null if the book wasn't found.
-*/
+/**
+ Loads a book record, mutates it via mutateFn (in place), persists it, and pushes to the cloud. Always
+ stamps lastModified. Resolves to the updated record, or null if the book wasn't found.
+
+ @param {string|number} bookId - The unique identifier of the book record to update.
+ @param {function(Object): void} mutateFn - A callback function that mutates the retrieved book record in place.
+ @returns {Promise<Object|null>} A promise that resolves to the updated book record, or null if the book was not found or an error occurred.
+ */
 function updateBookRecord(bookId, mutateFn) {
   return new Promise((resolve) => {
     const transaction = db.transaction([Config.Db.STORE_BOOKS], "readwrite");
@@ -177,12 +198,17 @@ function updateBookRecord(bookId, mutateFn) {
   });
 }
 
-/*
- Store-agnostic sibling of updateBookRecord() above, for stores other than
- books (e.g. notes/note tags in 12-notes.js) that don't need a cloud push
- baked in - the caller passes its own pushFn (or null to skip). Same
- get/mutate/put/stamp-lastModified shape either way.
-*/
+/**
+ Store-agnostic sibling of updateBookRecord() above, for stores other than books (e.g. notes/note tags in
+ 12-notes.js) that don't need a cloud push baked in - the caller passes its own pushFn (or null to skip).
+ Same get/mutate/put/stamp-lastModified shape either way.
+
+ @param {string} storeName - The name of the IndexedDB object store.
+ @param {string|number} recordId - The unique identifier of the record to update.
+ @param {function(Object): void} mutateFn - A callback function that mutates the retrieved record in place.
+ @param {function(Object): void|null} [pushFn] - Optional callback function to push the updated record to a remote service.
+ @returns {Promise<Object|null>} A promise that resolves to the updated record, or null if not found or an error occurred.
+ */
 function updateRecordInStore(storeName, recordId, mutateFn, pushFn) {
   return new Promise((resolve) => {
     const transaction = db.transaction([storeName], "readwrite");
@@ -205,13 +231,15 @@ function updateRecordInStore(storeName, recordId, mutateFn, pushFn) {
   });
 }
 
-/*
- Shared read/write for a JSON array persisted to a localStorage key, with
- the "_ts" companion timestamp (read by 11-firebase-sync.js to compare
- against a remote settings bundle) and a fire-and-forget settings push -
- the exact pattern behind loadCollapsedNoteTagKeys/saveCollapsedNoteTagKeys
- and loadLastUsedNoteTagIds/saveLastUsedNoteTagIds in 12-notes.js.
-*/
+/**
+ Shared read for a JSON array persisted to a localStorage key, with the "_ts" companion timestamp
+ (read by 11-firebase-sync.js to compare against a remote settings bundle) and a fire-and-forget settings
+ push - the exact pattern behind loadCollapsedNoteTagKeys/saveCollapsedNoteTagKeys and
+ loadLastUsedNoteTagIds/saveLastUsedNoteTagIds in 12-notes.js.
+
+ @param {string} key - The localStorage key to retrieve and parse.
+ @returns {Array<*>} The parsed array stored at the key, or an empty array if invalid or not found.
+ */
 function loadJsonArrayFromLocalStorage(key) {
   const raw = localStorage.getItem(key);
   if (!raw) return [];
@@ -222,13 +250,14 @@ function loadJsonArrayFromLocalStorage(key) {
     return [];
   }
 }
-
+/** Saves a JSON array and its timestamp to localStorage, then triggers a cloud settings push. */
 function saveJsonArrayToLocalStorage(key, arr) {
   localStorage.setItem(key, JSON.stringify(arr));
   localStorage.setItem(`${key}_ts`, String(Date.now()));
   if (typeof pushNoteSettingsToCloud === "function") pushNoteSettingsToCloud();
 }
 
+/** Resolves relative components (`.` and `..`) in a URL path string to produce a normalized path. */
 function normalizePath(pathString) {
   const parts = pathString.split("/");
   const output = [];
@@ -243,6 +272,7 @@ function normalizePath(pathString) {
   return output.join("/");
 }
 
+/** Converts a Blob or File object into a base64-encoded Data URL string. */
 function convertBlobToBase64(blobItem) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -252,6 +282,7 @@ function convertBlobToBase64(blobItem) {
   });
 }
 
+/** Converts a base64 Data URL string back into a Blob object. */
 function base64ToBlob(base64) {
   const [header, data] = base64.split(",");
   const mime = header.match(/:(.*?);/)[1];
@@ -266,6 +297,7 @@ function base64ToBlob(base64) {
   return new Blob([new Uint8Array(array)], { type: mime });
 }
 
+/** Determines the MIME type for an image based on its file extension, defaulting to `image/png`. */
 function guessImageMimeType(path) {
   const ext = path.split(".").pop().toLowerCase();
   const map = {
@@ -279,11 +311,14 @@ function guessImageMimeType(path) {
   };
   return map[ext] || "image/png";
 }
- 
 
-// Escapes untrusted text (book titles/authors from an uploaded EPUB's own
-// metadata) before interpolating into innerHTML, so a crafted
-// <title>&lt;img onerror=...&gt;</title> can't execute as real markup.
+/**
+ Escapes untrusted text (such as book titles/authors from EPUB metadata) 
+ before interpolating into innerHTML to prevent XSS vulnerability.
+
+ @param {string|null|undefined} str
+ @returns {string} Escaped HTML-safe string or empty string.
+ */
 function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
@@ -294,6 +329,12 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ Formats a timestamp into a DD/MM/YYYY date string.
+
+ @param {number|string|Date} timestamp
+ @returns {string} Formatted date string, or "Unknown".
+ */
 function formatDateOnly(timestamp) {
     if (!timestamp) return "Unknown";
 
@@ -306,17 +347,16 @@ function formatDateOnly(timestamp) {
     return `${day}/${month}/${year}`;
 }
 
-/*
- LIGHTWEIGHT MARKDOWN - note/comment display formatting
+/**
+ Lightweight Markdown formatter for note/comment display - purpose-built for note comments, not a full
+ Markdown engine. Supports bold, italic, strike, code, underline, unordered lists, and ordered lists.
 
- Purpose-built formatter for note comments, not a full Markdown engine.
- Supports bold, italic, strike, code, underline, unordered lists, and
- ordered lists.
+ Escapes raw text before substitutions so user HTML cannot reach the output. Inline code is protected first,
+ then restored; bold runs before italic to avoid `**` being interpreted incorrectly. Lists are processed last.
 
- Escapes raw text before substitutions so user HTML cannot reach the output.
- Inline code is protected first, then restored; bold runs before italic to
- avoid `**` being interpreted incorrectly. Lists are processed last.
-*/
+ @param {string} rawText
+ @returns {string}
+ */
 function renderLightweightMarkdown(rawText) {
     if (rawText === null || rawText === undefined || rawText === "") return "";
 
@@ -355,11 +395,12 @@ function renderLightweightMarkdown(rawText) {
     return escaped;
 }
 
-/*
- Groups consecutive bullet/numbered lines into one <ul>/<ol> rather than a
- stack of one-item lists. Non-list lines are rejoined with <br> so a plain
- multi-line comment still breaks visually the same way innerText did.
-*/
+/**
+ Groups consecutive bullet/numbered lines into one <ul>/<ol> rather than a stack of one-item lists. Non-list
+ lines are rejoined with <br> so a plain multi-line comment still breaks visually the same way innerText did.
+ @param {string} text
+ @returns {string}
+ */
 function renderMarkdownLists(text) {
     const lines = text.split("\n");
     // {content, isBlock} - isBlock true for a flushed <ul>/<ol> (already
@@ -407,6 +448,11 @@ function renderMarkdownLists(text) {
     return result;
 }
 
+/**
+ Positions a flyout menu relative to a trigger element while clamping it inside the viewport.
+ @param {HTMLElement} menu
+ @param {MouseEvent|Event} triggerEvent
+ */
 function positionFlyoutMenu(menu, triggerEvent) {
   const triggerRect = triggerEvent.currentTarget.getBoundingClientRect();
 
@@ -438,39 +484,50 @@ function positionFlyoutMenu(menu, triggerEvent) {
   menu.style.top = `${top + window.scrollY}px`;
 }
 
-
-/*
- Single source of truth for whether tracked timeSpentSeconds represents
- meaningful reading or just noise from brief opens/taps.
- Returns 0 below the configured threshold and the original value otherwise.
- Stats should use this instead of reading timeSpentSeconds directly, so
- tiny values cannot distort calculations inconsistently.
-*/
+/**
+ Single source of truth for whether tracked timeSpentSeconds represents meaningful reading or just noise
+ from brief opens/taps. Returns 0 below the configured threshold and the original value otherwise. Stats
+ should use this instead of reading timeSpentSeconds directly, so tiny values cannot distort calculations
+ inconsistently.
+ @param {number} rawSeconds
+ @returns {number}
+ */
 function getMeaningfulTrackedSeconds(rawSeconds) {
     const seconds = rawSeconds || 0;
     return seconds >= Config.Reading.MIN_MEANINGFUL_TRACKED_SECONDS ? seconds : 0;
 }
 
-// Minutes-returning convenience wrapper.
+/**
+ Converts meaningful reading time in seconds to rounded minutes.
+ @param {number} rawSeconds
+ @returns {number}
+ */
 function getMeaningfulTrackedMinutes(rawSeconds) {
     return Math.round(getMeaningfulTrackedSeconds(rawSeconds) / 60);
 }
 
+/**
+ Formats a minute count into a human-readable duration string (e.g. "1h 30m" or "45m").
+ @param {number} mins
+ @returns {string}
+ */
 function formatMinutes(mins) {
     const h = Math.floor(mins / 60);
     const m = Math.round((mins % 60)*10)/10;
     return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-/*
- Formats a calendar-time duration in ms (e.g. firstOpened to completedDate)
- - hours while under a day, whole days otherwise. Kept separate from
- formatMinutes() above since that formats accumulated reading time (hh/mm)
+/**
+ Formats a calendar-time duration in ms (e.g. firstOpened to completedDate) - hours while under a day, whole
+ days otherwise. Kept separate from formatMinutes() above since that formats accumulated reading time (hh/mm)
  while this formats elapsed wall-clock time between two dates.
-*/
+
+ @param {number} ms
+ @returns {string}
+ */
 function formatCompletionDuration(ms) {
     if (ms === null || ms === undefined || ms < 0) return "—";
-    const hours = ms / (1000 * 60 * 60);
+    const hours = ms / (1000 *60 *60);
     if (hours < 1) return "<1h";
     if (hours < 24) return `${Math.round(hours)}h`;
     const days = Math.round(hours / 24);
@@ -495,49 +552,52 @@ const FALLBACK_STEP_PX = Config.AutoScroller.FALLBACK_STEP_PX; // used if no vis
 const TARGET_WORDS_PER_TICK = Config.AutoScroller.TARGET_WORDS_PER_TICK;
 
 function getCooldownMs() {
-  return Number(document.getElementById("setting-scroll-delay").value) * 1000;
+  return Number(document.getElementById("setting-scroll-delay").value) *1000;
 }
-
+/**
+ Counts the number of visible words inside the reader viewport by walking text nodes.
+ @returns {number}
+ */
 function countVisibleWords() {
   const container = document.getElementById("reader-container");
   const frame = document.getElementById("text-render-frame");
   if (!container || !frame) return 0;
- 
+
   const containerRect = container.getBoundingClientRect();
   const walker = document.createTreeWalker(frame, NodeFilter.SHOW_TEXT);
   let words = 0;
   let node;
- 
+
   while ((node = walker.nextNode())) {
     const text = node.textContent;
     if (!text.trim()) continue;
- 
+
     const range = document.createRange();
     range.selectNodeContents(node);
     const rect = range.getBoundingClientRect();
- 
+
     const isVisible = rect.bottom >= containerRect.top && rect.top <= containerRect.bottom;
     if (isVisible) {
       words += text.trim().split(/\s+/).filter(Boolean).length;
     }
   }
- 
+
   return words;
 }
 
-/*
- Converts visible-word density into a per-tick pixel step. pixelsPerWord
- shrinks on dense pages (small text/tight spacing) and grows on sparse
- ones, so scrolling TARGET_WORDS_PER_TICK worth of words always takes
- about the same reading time regardless of layout.
-*/
+/**
+ Converts visible-word density into a per-tick pixel step.
+ pixelsPerWord shrinks on dense pages (small text/ tight spacing) and grows on sparse ones,
+ so scrolling `TARGET_WORDS_PER_TICK` worth of words always takes about the same reading time regardless of layout.
+ @returns {number}
+ */
 function computeAdaptiveStepPx() {
   const container = document.getElementById("reader-container");
   if (!container) return FALLBACK_STEP_PX;
- 
+
   const visibleHeight = container.clientHeight;
   const visibleWords = countVisibleWords();
- 
+
   if (!visibleWords || !visibleHeight) {
     if (AUTOSCROLL_DEBUG) {
       console.log(`[AutoScroll] no visible words detected (visibleWords=${visibleWords},
@@ -545,12 +605,12 @@ function computeAdaptiveStepPx() {
     }
     return FALLBACK_STEP_PX;
   }
- 
+
   const wordsPerPixel = visibleWords / visibleHeight;
   const pixelsPerWord = 1 / wordsPerPixel;
   const idealStep = TARGET_WORDS_PER_TICK * pixelsPerWord;
   const clampedStep = Math.min(MAX_STEP_PX, Math.max(MIN_STEP_PX, idealStep));
- 
+
   if (AUTOSCROLL_DEBUG) {
     console.log(
       `[AutoScroll] visible words=${visibleWords} in ${visibleHeight}px ` +
@@ -559,14 +619,16 @@ function computeAdaptiveStepPx() {
       (clampedStep !== idealStep ? `→ CLAMPED to ${clampedStep.toFixed(1)}px` : `→ using ${clampedStep.toFixed(1)}px`)
     );
   }
- 
+
   return clampedStep;
 }
 
 let lastScrollTime = 0;
 let interval = null;
 const fill = document.getElementById("fill");
-
+/**
+ Re-initializes autoscroll with updated speed or delay settings when input changes.
+ */
 function applySpeedChange() {
   if (!enabled) return;
   clearInterval(interval);
@@ -575,18 +637,24 @@ function applySpeedChange() {
 }
 document.getElementById("setting-scroll-delay").addEventListener("input", applySpeedChange);
 
+/**
+ Starts autoscroll timer loop, advances reader container, and initializes progress bar animation.
+ */
 function startScroll() {
   lastScrollTime = Date.now();
   fill.style.width = "100%";
   interval = setInterval(() => {
     document.getElementById("reader-container").scrollBy(0, computeAdaptiveStepPx());
- 
+
     lastScrollTime = Date.now();
   }, getCooldownMs());
   fill.style.boxShadow = "0 0 3px 5px var(--accent)";
   requestAnimationFrame(updateBar);
 }
- 
+
+/**
+ Stops autoscroll, clears interval timer, and resets progress bar visual styling.
+ */
 function stopScroll() {
   clearInterval(interval);
   fill.style.boxShadow = "none";
@@ -594,33 +662,41 @@ function stopScroll() {
   interval = null;
   enabled = false;
 }
- 
+
+/**
+ Toggles autoscroll state between active and inactive.
+ */
 function toggleScroll() {
   enabled = !enabled;
- 
+
   if (enabled) startScroll();
   else stopScroll();
 }
- 
+
+/**
+ Updates progress bar width via requestAnimationFrame to show time remaining until next scroll tick.
+ */
 function updateBar() {
   if (!enabled) return;
- 
+
   const now = Date.now();
   const remaining = Math.max(0, getCooldownMs() - (now - lastScrollTime));
   const pct = remaining / getCooldownMs();
- 
+
   fill.style.width = (pct * 100) + "%";
- 
+
   requestAnimationFrame(updateBar);
 }
- 
+
+/** Toggles autoscroll when Ctrl+D shortcut is pressed. */
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.key === "d") {
     e.preventDefault();
     toggleScroll();
   }
 });
- 
+
+/** Stops autoscroll on general keyboard interaction (excluding arrow keys and Ctrl+D). */
 document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
     return;
@@ -628,6 +704,6 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.key === "d") {
     return; // Already handled above — avoids immediately re-toggling
   }
- 
+
   stopScroll();
 });

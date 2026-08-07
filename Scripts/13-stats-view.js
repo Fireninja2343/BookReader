@@ -1,6 +1,11 @@
 // =================================================================
 // PER-BOOK "DELTA FROM AVERAGE" COMPARISONS
 // =================================================================
+/**
+ Computes the mean and "≈ average" cutoff for each of the four comparable metrics.
+ @param {Array<Object>} groupMetrics - perBookMetrics-shaped entries to average.
+ @returns {Object} Means plus per-metric cutoffs; null for metrics with no valid entries.
+*/
 function computeStatAveragesForGroup(groupMetrics) {
     const timeSpentValues = groupMetrics.filter(m => m.mins > 0).map(m => m.mins);
     const pagesPerHourValues = groupMetrics.filter(m => m.pagesPerHour !== null).map(m => m.pagesPerHour);
@@ -14,10 +19,6 @@ function computeStatAveragesForGroup(groupMetrics) {
         pagesPerHour: mean(pagesPerHourValues),
         completionDurationMs: mean(completionDurationValues),
         pagesPerDay: mean(pagesPerDayValues),
-        // Per-metric adaptive "≈ average" cutoffs - see computeApproxAverageCutoffPercent().
-        // Kept alongside the plain means since both are derived from the
-        // exact same filtered value arrays and both are needed together
-        // wherever a delta gets built.
         cutoffs: {
             timeSpentMins: computeApproxAverageCutoffPercent(timeSpentValues),
             pagesPerHour: computeApproxAverageCutoffPercent(pagesPerHourValues),
@@ -26,41 +27,20 @@ function computeStatAveragesForGroup(groupMetrics) {
         },
     };
 }
-/*
- Statuses that get their own "delta from average" group. Not Started is
- excluded because it has no meaningful reading activity.
-
- Add a new status here if it should compare only against books with the
- same status. The averaging logic stays generic.
-*/
+// Statuses compared as their own "delta from average" group; Not Started is excluded.
 const DELTA_COMPARISON_STATUSES = [
     Config.Miscellaneous.READING_STATUS.COMPLETED,
     Config.Miscellaneous.READING_STATUS.IN_PROGRESS,
     Config.Miscellaneous.READING_STATUS.PAUSED,
 ];
-/*
- Key statAveragesByStatus stores the combined "all comparison-eligible
- statuses" average under, alongside its normal per-status entries. Used as
- the delta baseline for a collapsed group summary row whose books don't all
- share one status (see buildGroupSummaryRowHtml()) - not a real reading
- status itself, so it's kept out of DELTA_COMPARISON_STATUSES and READING_STATUS.
-*/
+// Key statAveragesByStatus stores the combined all-statuses average under - used as the
+// baseline for a collapsed group whose books don't all share one status.
 const ALL_STATUSES_AVERAGE_KEY = "all";
-/*
- Computes separate averages/cutoffs for each status in
- DELTA_COMPARISON_STATUSES, so books are compared only against others with
- the same status. Also computes one combined average across every
- comparison-eligible status (see ALL_STATUSES_AVERAGE_KEY), for callers that
- need a single baseline spanning statuses - currently only a collapsed
- group summary row whose books don't all share one status.
-
- Returns an object keyed by status (e.g. result.completed) plus
- result[ALL_STATUSES_AVERAGE_KEY], where each value has the same shape as
- computeStatAveragesForGroup(), allowing existing delta code to work
- unchanged.
-
- Iterating DELTA_COMPARISON_STATUSES keeps this function generic—adding a
- new comparison status only requires updating that list.
+/**
+ Computes averages/cutoffs per status in DELTA_COMPARISON_STATUSES, plus one combined
+ average across all comparison-eligible statuses (ALL_STATUSES_AVERAGE_KEY).
+ @param {Array<Object>} perBookMetrics - All books' metric entries to split by status.
+ @returns {Object} Result keyed by status plus result[ALL_STATUSES_AVERAGE_KEY].
 */
 function computeStatAveragesByStatus(perBookMetrics) {
     const result = {};
@@ -72,17 +52,16 @@ function computeStatAveragesByStatus(perBookMetrics) {
     result[ALL_STATUSES_AVERAGE_KEY] = computeStatAveragesForGroup(allComparableMetrics);
     return result;
 }
-/*
- Computes a dynamic "≈ average" cutoff instead of using a fixed percentage.
 
- The cutoff shrinks for small samples and tightly clustered data, making
- small but meaningful differences visible. It is based on coefficient of
- variation per sample and clamped to a sensible range.
+const APPROX_AVERAGE_CUTOFF_MIN_PERCENT = Config.Miscellaneous.APPROX_AVERAGE_CUTOFF_MIN_PERCENT;
+const APPROX_AVERAGE_CUTOFF_MAX_PERCENT = Config.Miscellaneous.APPROX_AVERAGE_CUTOFF_MAX_PERCENT;
+const APPROX_AVERAGE_CUTOFF_SCALE = Config.Miscellaneous.APPROX_AVERAGE_CUTOFF_SCALE; // scales CV-per-sample into a percent
+/**
+ Computes a dynamic "≈ average" cutoff from coefficient of variation, instead of a fixed
+ percentage - shrinks for small/tightly-clustered samples so small differences stay visible.
+ @param {number[]} values - Sample values.
+ @returns {number} Cutoff percent, clamped to [MIN, MAX].
 */
-const APPROX_AVERAGE_CUTOFF_MIN_PERCENT = Config.Miscellaneous.APPROX_AVERAGE_CUTOFF_MIN_PERCENT; // minimum cutoff
-const APPROX_AVERAGE_CUTOFF_MAX_PERCENT = Config.Miscellaneous.APPROX_AVERAGE_CUTOFF_MAX_PERCENT; // maximum cutoff
-const APPROX_AVERAGE_CUTOFF_SCALE = Config.Miscellaneous.APPROX_AVERAGE_CUTOFF_SCALE; // scales CV-per-sample into a percent cutoff
-
 function computeApproxAverageCutoffPercent(values) {
     if (values.length < 2) return APPROX_AVERAGE_CUTOFF_MIN_PERCENT; // can't measure spread
 
@@ -100,12 +79,16 @@ function computeApproxAverageCutoffPercent(values) {
     return Math.max(APPROX_AVERAGE_CUTOFF_MIN_PERCENT, Math.min(APPROX_AVERAGE_CUTOFF_MAX_PERCENT, cutoff));
 }
 
-/*
- Builds the "↑/↓ X than average (+Y%)" line beneath a stat, or "" if no
- valid comparison exists.
-
- higherIsBetter determines which direction is considered an improvement
- for the current metric.
+/**
+ Builds the "↑/↓ X than average (+Y%)" line beneath a stat, or "" if no valid comparison.
+ @param {number|null} value - This book's value for the metric.
+ @param {number|null} average - Comparison-group average.
+ @param {function(number): string} formatFn - Formats the absolute difference.
+ @param {string} higherLabel - Label when above average.
+ @param {string} lowerLabel - Label when below average.
+ @param {boolean} higherIsBetter - Which direction counts as an improvement.
+ @param {number} [approxCutoffPercent=5] - Below this percent, treated as "≈ average".
+ @returns {string} HTML for the delta row, or "".
 */
 function buildStatDeltaHtml(value, average, formatFn, higherLabel, lowerLabel, higherIsBetter, approxCutoffPercent) {
     if (value === null || value === undefined || average === null || average === undefined || average === 0) {
@@ -116,11 +99,6 @@ function buildStatDeltaHtml(value, average, formatFn, higherLabel, lowerLabel, h
     const percentDiff = (absoluteDiff / average) * 100;
     const absPercent = Math.abs(percentDiff);
 
-    // Within the dataset's own adaptive cutoff of average reads as
-    // "approximately average" rather than forcing every book into a strict
-    // above/below bucket. See computeApproxAverageCutoffPercent() for how
-    // this is derived from the data itself (falls back to 5 if the caller
-    // doesn't supply one, matching the old fixed behavior).
     const cutoff = typeof approxCutoffPercent === "number" ? approxCutoffPercent : 5;
     if (absPercent < cutoff) {
         return `<div class="stat-delta-row stat-delta-neutral">≈ average</div>`;
@@ -133,13 +111,8 @@ function buildStatDeltaHtml(value, average, formatFn, higherLabel, lowerLabel, h
     const formattedAbsDiff = formatFn(Math.round(Math.abs(absoluteDiff)*10)/10);
     const sign = isAboveAverage ? "+" : "-";
 
-    /*
-     Saturation scales continuously with |percentDiff| rather than snapping
-     between a few fixed shades, so the magnitude is visually obvious even
-     between two books that are both merely "above average" but by very
-     different amounts. Alpha is clamped to keep the text legible against
-     every theme's background at the extreme end.
-    */
+    // Saturation scales continuously with |percentDiff| so magnitude stays visually
+    // obvious; alpha clamped to keep text legible against every theme.
     const alpha = Math.min(0.95, 0.35 + (absPercent / 100) * 0.6);
     const colorVar = isGood ? "--stat-good-rgb" : "--stat-bad-rgb";
     const color = `rgba(var(${colorVar}), ${alpha.toFixed(2)})`;
@@ -157,21 +130,8 @@ function buildStatDeltaHtml(value, average, formatFn, higherLabel, lowerLabel, h
     `;
 }
 
-/*
- Single source of truth for the four comparable per-book metrics:
- Time Spent, Pages per Hour, Completion Duration, and Pages per Day.
-
- Each metric keeps its value getter, formatter, and higher-is-better
- direction here, so code needing all four metrics can loop over this
- instead of maintaining separate lists. Adding another comparable metric
- only requires adding one entry.
-
- Formatters use arrow wrappers:
- `(v) => formatMinutes(v)` instead of `format: formatMinutes`.
-
- This defers the function lookup until formatting runs, because this file
- loads before the formatter functions are defined in 14-utils.js.
-*/
+// Single source of truth for the four comparable per-book metrics. Formatters use arrow
+// wrappers (e.g. `(v) => formatMinutes(v)`) so the lookup defers until formatting runs.
 const FOUR_METRIC_DEFINITIONS = [
     {
         key: "timeSpent",
@@ -211,22 +171,14 @@ const FOUR_METRIC_DEFINITIONS = [
     },
 ];
 
-/*
- Computes the four "delta from average" HTML snippets:
- Time Spent, Pages per Hour, Completion Duration, and Pages per Day.
-
- Accepts any object shaped like a perBookMetrics entry, and is shared by
- buildStatsRowHtml and renderReadingSpeedProgression() so both views use
- the same comparison logic without duplication.
-
- Uses the book's own status to select averages from
- statAveragesByStatus:
- each delta compares only against books with the same status. Statuses
- without an averages group naturally return no delta through
- buildStatDeltaHtml() handling.
-
- Loops over FOUR_METRIC_DEFINITIONS instead of manually writing each
- metric, keeping this function synchronized with the metric definitions.
+/**
+ Computes the four "delta from average" HTML snippets for a metric entry, comparing
+ against its own status group in statAveragesByStatus. Shared by buildStatsRowHtml and
+ renderReadingSpeedProgression().
+ @param {Object} m - A perBookMetrics-shaped entry.
+ @param {Object} statAveragesByStatus - Averages/cutoffs keyed by status.
+ @returns {Object} Delta HTML strings keyed by metric (timeSpent, pagesPerHour,
+   completionDuration, pagesPerDay).
 */
 function buildFourMetricDeltas(m, statAveragesByStatus) {
     const groupAverages = statAveragesByStatus[m.status];
@@ -242,15 +194,6 @@ function buildFourMetricDeltas(m, statAveragesByStatus) {
     return result;
 }
 
-/*
- --group-tint custom property matching buildBookCardsInLayout()
- (04-library-view.js), so grouped stats rows match the library grid's tint.
-
- The stats table always lists books flat, so only the plain own-group
- lookup is needed here - no equivalent to the activeGroupFilterId branch.
-
- Returns "" for ungrouped books.
-*/
 function getGroupTintStyle(book) {
     if (!book.groupId) return "";
     const ownGroup = loadedGroupsMemory.find((g) => g.id === book.groupId);
@@ -259,32 +202,24 @@ function getGroupTintStyle(book) {
     return `--group-tint:${tint}; background-color:var(--group-tint);`;
 }
 
-/*
- Stronger tint for a collapsed group's summary row - reuses the 75%-mix
- buildBookCardsInLayout() uses inside a group folder. Kept on its own
- --group-tint-strong property so it never fights a child's --group-tint.
-*/
 function getGroupSummaryTintStyle(group) {
     if (!group || !group.backgroundColor) return "";
     const tint = `color-mix(in srgb, ${group.backgroundColor} 75%, var(--bg-card))`;
     return `--group-tint-strong:${tint}; background-color:var(--group-tint-strong);`;
 }
 
-/*
- Builds one <tr> for the per-book stats table, with a "delta from average"
- line under each of the four comparable stat cells.
-
- options:
- - grouped: adds .stats-row-grouped, independent of collapsibility.
- - showCollapseArrow: true only for a contiguous expanded group's first
-   row, where the ▾ toggle lives. Other rows still reserve the gutter width
-   via .stats-collapse-gutter so titles stay aligned.
- - groupId: wires the arrow's click handler when showCollapseArrow is true.
- - disableCollapseArrow: true while a column sort is active. The arrow
-   still renders (gutter width unchanged) but loses its click handler and
-   gets .stats-collapse-arrow-disabled - collapsing one expanded group
-   mid-sort would leave the sorted order visibly stale until the next
-   render.
+/**
+ Builds one <tr> for the per-book stats table, with a delta line under each metric cell.
+ @param {Object} m - perBookMetrics entry for the row.
+ @param {Object} statAveragesByStatus - Averages/cutoffs keyed by status.
+ @param {Object} [options={}]
+ @param {boolean} [options.grouped=false] - Adds .stats-row-grouped.
+ @param {boolean} [options.showCollapseArrow=false] - Shows the ▾ toggle (first row of an
+   expanded group); other rows still reserve the gutter width for alignment.
+ @param {number|null} [options.groupId=null] - Group id the arrow toggles.
+ @param {boolean} [options.disableCollapseArrow=false] - Disables the arrow while a column
+   sort is active, since collapsing mid-sort would leave a stale order.
+ @returns {string} HTML for the `<tr>` row.
 */
 function buildStatsRowHtml(m, statAveragesByStatus, options = {}) {
     const { grouped = false, showCollapseArrow = false, groupId = null, disableCollapseArrow = false } = options;
@@ -310,10 +245,11 @@ function buildStatsRowHtml(m, statAveragesByStatus, options = {}) {
     `;
 }
 
-/*
- Which statAveragesByStatus entry a collapsed group compares against: that
- status's average if every book shares one status, otherwise
- ALL_STATUSES_AVERAGE_KEY.
+/**
+ Baseline status a collapsed group compares against: that status if every book in the
+ group shares one, otherwise ALL_STATUSES_AVERAGE_KEY.
+ @param {Array<Object>} groupMetrics - perBookMetrics entries in one group.
+ @returns {string}
 */
 function resolveGroupDeltaBaselineStatus(groupMetrics) {
     const statusesInGroup = new Set(groupMetrics.map((m) => m.status));
@@ -324,14 +260,13 @@ function resolveGroupDeltaBaselineStatus(groupMetrics) {
     return ALL_STATUSES_AVERAGE_KEY;
 }
 
-/*
- Builds the single summary <tr> standing in for a collapsed group: group
- name, a "N books, X completed / Y in progress / Z paused" counts line, and
- the group's own averages/deltas for the four metric columns.
-
- Feeds computeStatAveragesForGroup()'s result into a synthetic metric object
- shaped like a perBookMetrics entry, so buildFourMetricDeltas() can compare
- it against the resolved baseline without its own group-specific logic.
+/**
+ Builds the summary <tr> for a collapsed group: name, a completed/in-progress/paused
+ counts line, and the group's own averages/deltas.
+ @param {number} groupId
+ @param {Array<Object>} groupMetrics - perBookMetrics entries in this group.
+ @param {Object} statAveragesByStatus - Delta comparison baseline.
+ @returns {string} HTML for the summary `<tr>`.
 */
 function buildGroupSummaryRowHtml(groupId, groupMetrics, statAveragesByStatus) {
     const group = loadedGroupsMemory.find((g) => g.id === groupId);
@@ -374,14 +309,11 @@ function buildGroupSummaryRowHtml(groupId, groupMetrics, statAveragesByStatus) {
     `;
 }
 
-/*
- A group is collapsible only when all its books currently form one
- unbroken run in the displayed order. Recomputed every render since row
- order can change from sorting, drag-and-drop, or group-order sorting.
-
- Returns the Set of qualifying group ids. A saved-collapsed group that
- doesn't qualify keeps that saved state (see
- COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY) and just renders expanded.
+/**
+ A group is collapsible only when all its books form one unbroken run in display order.
+ Recomputed every render since order can change from sorting or drag-and-drop.
+ @param {Array<Object>} orderedMetrics - perBookMetrics entries in display order.
+ @returns {Set<number>} Group ids that qualify as contiguous.
 */
 function computeContiguousGroupIds(orderedMetrics) {
     const groupIdToIndices = new Map();
@@ -400,12 +332,6 @@ function computeContiguousGroupIds(orderedMetrics) {
     return contiguousGroupIds;
 }
 
-/*
- Persistence for which stats-table groups are collapsed, via
- getUserConfig()/saveUserConfig() (14-utils.js). Kept independent of
- contiguity: a group's collapsed flag survives while temporarily
- un-collapsible, resuming the moment it's contiguous again.
-*/
 const COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY = "collapsedStatsGroupIds";
 
 function getCollapsedStatsGroupIds() {
@@ -417,15 +343,9 @@ function setCollapsedStatsGroupIds(collapsedGroupIdsSet) {
     saveUserConfig({ [COLLAPSED_STATS_GROUP_IDS_CONFIG_KEY]: Array.from(collapsedGroupIdsSet) });
 }
 
-/*
- Cached perBookMetrics/statAveragesByStatus from the last showStatsViewState()
- pass, so collapse/sort toggles can re-render just the table body instead
- of re-running the full stats pass.
-*/
 let cachedPerBookMetrics = null;
 let cachedStatAveragesByStatus = null;
 
-// Click handler for a single group's ▾/▸ gutter arrow.
 function toggleStatsGroupCollapse(groupId) {
     const collapsedGroupIds = getCollapsedStatsGroupIds();
     if (collapsedGroupIds.has(groupId)) {
@@ -437,12 +357,6 @@ function toggleStatsGroupCollapse(groupId) {
     renderStatsTableBody();
 }
 
-/*
- Collapse All / Expand All always work regardless of sort state or any
- group's current contiguity - they just write the full persisted
- collapsed-id set. A group saved as collapsed here still only renders as a
- summary row while contiguous; see computeContiguousGroupIds().
-*/
 function collapseAllStatsGroups() {
     if (!cachedPerBookMetrics) return;
     const allGroupIds = new Set(cachedPerBookMetrics.map((m) => m.book.groupId).filter(Boolean));
@@ -455,29 +369,18 @@ function expandAllStatsGroups() {
     renderStatsTableBody();
 }
 
-/*
- Splits perBookMetrics into row-ordering units. Contiguity (all of a
- group's books currently forming an unbroken run - see
- computeContiguousGroupIds()) is only a gate here, checked below to decide
- whether a group can be treated as a unit at all: a group that doesn't
- qualify is never wrapped, collapsed or not, and its books fall through to
- the plain "book" branch individually, same as an ungrouped book.
+/**
+ Splits perBookMetrics into row-ordering units based on group contiguity
+ (see computeContiguousGroupIds()) and collapsed state:
+ - Non-contiguous group: books fall through individually, like ungrouped books.
+ - Collapsed: one "collapsedGroup" unit.
+ - Expanded, not sorting: one "expandedGroup" unit (renders as a block).
+ - Expanded, sorting: individual "book" units, so they scatter into the global sort.
 
- For a group that does qualify:
- - Collapsed: always one "collapsedGroup" unit (one aggregate row), sort
-   active or not - once collapsed it's a single row, so there's nothing
-   left to scatter.
- - Expanded, not sorting: one "expandedGroup" unit wrapping all its member
-   rows, so the group renders as a block (matches its already-unbroken
-   on-screen order).
- - Expanded, sorting: no group-cohesion is enforced (see
-   sortStatsTableUnits()), so its books are emitted as individual "book"
-   units and scatter into the global sort like any other row.
-
- Each unit is one of:
- - { type: "book", metric }
- - { type: "collapsedGroup", groupId, groupMetrics }
- - { type: "expandedGroup", groupId, groupMetrics }
+ @param {Array<Object>} perBookMetrics - Books' metric entries in display order.
+ @param {boolean} isSorting - True while a column sort is active.
+ @returns {Array<Object>} Units: { type: "book", metric } | { type: "collapsedGroup" |
+   "expandedGroup", groupId, groupMetrics }.
 */
 function computeStatsTableUnits(perBookMetrics, isSorting) {
     const contiguousGroupIds = computeContiguousGroupIds(perBookMetrics);
@@ -511,13 +414,12 @@ function computeStatsTableUnits(perBookMetrics, isSorting) {
     return units;
 }
 
-/*
- Resolves the value a unit sorts by for the active column def, or null if
- not comparable (sorted to the end - see sortStatsTableUnits()).
-
- A book unit uses its own metric. A group unit, collapsed or expanded,
- sorts by the group's own aggregate average (computeStatAveragesForGroup()),
- so an expanded group ranks the same as it would if collapsed.
+/**
+ Resolves the value a unit sorts by, or null if not comparable (sorted to the end).
+ A group unit sorts by its aggregate average, so it ranks the same expanded or collapsed.
+ @param {Object} unit - A unit from computeStatsTableUnits().
+ @param {Object} def - The active FOUR_METRIC_DEFINITIONS entry.
+ @returns {number|null}
 */
 function getStatsUnitSortValue(unit, def) {
     if (unit.type === "book") return def.getValue(unit.metric);
@@ -526,10 +428,10 @@ function getStatsUnitSortValue(unit, def) {
     return value === null || value === undefined ? null : value;
 }
 
-/*
- Orders units by the active sort column, if any. Units without a
- comparable value move to the end, in original relative order.
- Returns units unchanged when no column is active.
+/**
+ Orders units by the active sort column; units without a comparable value go last.
+ @param {Array<Object>} units - Units from computeStatsTableUnits().
+ @returns {Array<Object>}
 */
 function sortStatsTableUnits(units) {
     const { columnKey, direction } = statsSortState;
@@ -553,18 +455,12 @@ function sortStatsTableUnits(units) {
     return [...withValue, ...withoutValue];
 }
 
-/*
- Builds the full #stats-books-table-body HTML: walks perBookMetrics'
- display order into row-ordering units (computeStatsTableUnits()),
- sorts those units if a column sort is active (sortStatsTableUnits()),
- then renders each unit.
-
- A collapsed group is always one aggregate buildGroupSummaryRowHtml() row.
- An expanded group renders its member rows individually via
- buildStatsRowHtml(), with disableCollapseArrow set while sorting -
- collapsing one group mid-sort would leave a stale order on screen until
- the next render. Collapse All / Expand All aren't affected since they
- always re-render the whole body right after changing every group's state.
+/**
+ Builds the full #stats-books-table-body HTML from perBookMetrics: splits into units
+ (computeStatsTableUnits), sorts if a column is active, then renders each unit.
+ @param {Array<Object>} perBookMetrics - Books' metric entries in display order.
+ @param {Object} statAveragesByStatus - Averages/cutoffs keyed by status.
+ @returns {string} HTML for all `<tr>` rows.
 */
 function buildStatsTableRowsHtml(perBookMetrics, statAveragesByStatus) {
     const isSorting = !!(statsSortState.columnKey && statsSortState.direction);
@@ -590,24 +486,18 @@ function buildStatsTableRowsHtml(perBookMetrics, statAveragesByStatus) {
         .join("");
 }
 
-/*
- Column sort state for the per-book table's four metric headers. Not
- persisted - resetStatsSortState() runs each time the stats view opens.
-
- columnKey matches a FOUR_METRIC_DEFINITIONS key; direction cycles null ->
- "desc" -> "asc" -> null. Only one column is ever active, since a new
- columnKey always resets direction to "desc" - see handleStatsSortHeaderClick().
-*/
+// Column sort state for the per-book table headers. Not persisted - resetStatsSortState()
+// runs each time the stats view opens. direction cycles null -> "desc" -> "asc" -> null.
 let statsSortState = { columnKey: null, direction: null };
 
 function resetStatsSortState() {
     statsSortState = { columnKey: null, direction: null };
 }
 
-/*
- Click handler for one of the four sortable <th>s. Cycles that column
- dormant -> ▼ desc -> ▲ asc -> dormant; clicking a different column always
- starts it fresh at descending.
+/**
+ Click handler for a sortable column header. Cycles dormant -> desc -> asc -> dormant;
+ a different column always starts fresh at descending.
+ @param {string} columnKey - FOUR_METRIC_DEFINITIONS key of the clicked header.
 */
 function handleStatsSortHeaderClick(columnKey) {
     if (statsSortState.columnKey !== columnKey) {
@@ -621,10 +511,6 @@ function handleStatsSortHeaderClick(columnKey) {
     renderStatsTableBody();
 }
 
-/*
- Reflects statsSortState onto the four header arrow spans
- (.stats-sort-arrow, data-direction="desc"/"asc") by toggling "active".
-*/
 function updateStatsSortHeaderUI() {
     FOUR_METRIC_DEFINITIONS.forEach((def) => {
         const header = document.getElementById(`stats-sort-header-${def.key}`);
@@ -649,25 +535,20 @@ function renderStatsTableBody() {
 // =================================================================
 // LIBRARY DISTRIBUTION - DYNAMIC BUCKETING ENGINE
 // =================================================================
-/*
- Builds equal-width numeric buckets from the data's current range instead
- of fixed cutoffs, keeping distributions useful as library values change.
-
- Uses an IQR fence to determine the bucket range rather than raw min/max:
- extreme outliers cannot stretch all buckets and hide normal data. Values
- outside the fence are still included in the first or last bucket.
-
- Falls back to static buckets when there is not enough data or when the
- fenced range is degenerate, preventing zero-width buckets and invalid
- calculations.
-
- Returns {min, max, label} buckets. The first and last buckets use
- -Infinity/Infinity so every value is always included.
+/**
+ Builds equal-width numeric buckets from the data's IQR-fenced range instead of fixed
+ cutoffs, so outliers don't stretch every bucket. Falls back to staticBuckets when there's
+ too little data or a degenerate range.
+ @param {number[]} values - Raw values to bucket.
+ @param {Array<{min,max,label}>} staticBuckets - Fallback buckets.
+ @param {number} bucketCount - Number of dynamic buckets to build.
+ @param {string} unitLabel - Unit suffix for generated labels (e.g. "pages", "p/h").
+ @returns {Array<{min,max,label}>} Buckets; first/last use -Infinity/Infinity.
 */
 const MIN_VALUES_FOR_DYNAMIC_BUCKETS = 5;
-const IQR_FENCE_MULTIPLIER = 1.5; // standard "Tukey's fence" multiplier for mild-outlier trimming
+const IQR_FENCE_MULTIPLIER = 1.5; // Tukey's fence multiplier for mild-outlier trimming
 
-// Linear-interpolation percentile over a sorted array (values must already be sorted ascending).
+// Linear-interpolation percentile over a sorted array.
 function percentile(sortedValues, p) {
     const idx = p * (sortedValues.length - 1);
     const lower = Math.floor(idx);
@@ -682,19 +563,6 @@ function buildDynamicBuckets(values, staticBuckets, bucketCount, unitLabel) {
 
     const sorted = [...values].sort((a, b) => a - b);
 
-/*
- Bucket width is based on an IQR fence instead of raw min/max, preventing
- extreme outliers from stretching every bucket and hiding normal values.
-
- Uses Tukey's fence:
- values beyond 1.5 × (Q3 - Q1) outside the middle 50% are treated as
- outliers. The fence range is clamped to the actual data range when it
- extends beyond the available values.
-
- Uses quartiles instead of trimming a fixed percentage, so the behavior
- scales naturally with dataset size and distribution rather than removing
- an arbitrary amount of data.
-*/
     const q1 = percentile(sorted, 0.25);
     const q3 = percentile(sorted, 0.75);
     const iqr = q3 - q1;
@@ -705,21 +573,13 @@ function buildDynamicBuckets(values, staticBuckets, bucketCount, unitLabel) {
     if (!(trimmedMax > trimmedMin)) return staticBuckets; // degenerate trimmed range
 
     const width = (trimmedMax - trimmedMin) / bucketCount;
-
-    // Compute every bucket's true numeric edges first (edgeAt(i) is the
-    // boundary between bucket i-1 and bucket i in "normal" trimmed-range
-    // terms) before touching Infinity or labels at all - keeps the display
-    // logic below simple since it only ever reads real numbers.
     const edgeAt = (i) => trimmedMin + i * width;
 
     const buckets = [];
     for (let i = 0; i < bucketCount; i++) {
         const isFirst = i === 0;
         const isLast = i === bucketCount - 1;
-        // Real (finite) edges are what the label always shows; -Infinity/
-        // Infinity are only used for the actual min/max used to tally
-        // values, so outliers below/above the trimmed range still land in
-        // the first/last bucket instead of being dropped.
+        // First/last use -Infinity/Infinity so outliers still land in an end bucket.
         const min = isFirst ? -Infinity : edgeAt(i);
         const max = isLast ? Infinity : edgeAt(i + 1);
         const label = isLast
@@ -730,16 +590,16 @@ function buildDynamicBuckets(values, staticBuckets, bucketCount, unitLabel) {
     return buckets;
 }
 
-// Places a single value into the matching bucket's count. Shared by every
-// distribution below rather than each one writing its own find-and-increment.
+/**
+ Places values into their matching bucket's count.
+ @param {number[]} values
+ @param {Array<{min,max,label}>} buckets
+ @returns {Array<{label,count}>}
+*/
 function tallyIntoBuckets(values, buckets) {
     const counts = buckets.map(() => 0);
     for (const value of values) {
         for (let i = 0; i < buckets.length; i++) {
-            // First bucket's min and last bucket's max can be -Infinity/
-            // Infinity (see buildDynamicBuckets' outlier trimming), so this
-            // condition is naturally always-true on whichever end is open;
-            // every other bucket is a normal [min, max) range.
             if (value >= buckets[i].min && (value < buckets[i].max || buckets[i].max === Infinity)) {
                 counts[i]++;
                 break;
@@ -749,13 +609,12 @@ function tallyIntoBuckets(values, buckets) {
     return buckets.map((b, i) => ({ label: b.label, count: counts[i] }));
 }
 
-/*
- Computes the three Library Distribution breakdowns, reusing perBookMetrics
- (already built by the main loop in showStatsViewState()) instead of
- re-deriving pagesRead/isRead/pagesPerHour a second time. Each distribution
- returns { entries: [{label, count}], eligibleCount } - eligibleCount is the
- denominator for that distribution's percentages, which differs per chart
- (all books for Length/Status, only books with a valid pages/hour for Speed).
+/**
+ Computes the three Library Distribution breakdowns from perBookMetrics.
+ @param {Array<Object>} perBookMetrics
+ @returns {{bookLength, readingStatus, readingSpeed}} Each is { entries: [{label,
+   count}], eligibleCount } - eligibleCount is the percentage denominator, which differs
+   per chart (all books for Length/Status, only books with a valid pages/hour for Speed).
 */
 const BOOK_LENGTH_STATIC_BUCKETS = [
     { min: 0, max: 300, label: "0\u2013299 pages" },
@@ -775,9 +634,7 @@ const READING_SPEED_STATIC_BUCKETS = [
 ];
 
 function computeLibraryDistributions(perBookMetrics) {
-    // --- 1. Book Length Distribution ---
-    // Every book with a known page count qualifies, read or not - this is a
-    // library-composition chart, not a reading-progress one.
+    // 1. Book Length - every book with a known page count qualifies, read or not.
     const pageCounts = perBookMetrics.filter(m => m.totalPages > 0).map(m => m.totalPages);
     const lengthBuckets = buildDynamicBuckets(pageCounts, BOOK_LENGTH_STATIC_BUCKETS, 5, "pages");
     const bookLength = {
@@ -785,11 +642,7 @@ function computeLibraryDistributions(perBookMetrics) {
         eligibleCount: pageCounts.length,
     };
 
-    // --- 2. Reading Status Distribution ---
-    // Three fixed, mutually-exclusive buckets straight off each book's own
-    // isRead/isStarted flags (already computed in the main loop) - nothing
-    // dynamic here, since "how many status categories exist" isn't a
-    // function of the data the way page-count or speed ranges are.
+    // 2. Reading Status - fixed, mutually-exclusive buckets.
     let completedCount = 0, inProgressCount = 0, notStartedCount = 0;
     for (const m of perBookMetrics) {
         if (m.isRead) completedCount++;
@@ -805,11 +658,7 @@ function computeLibraryDistributions(perBookMetrics) {
         eligibleCount: perBookMetrics.length,
     };
 
-    // --- 3. Reading Speed Distribution ---
-    // Only books with a meaningful pages/hour figure qualify - same
-    // eligibility already enforced when perBookMetrics.pagesPerHour was
-    // computed (requires mins > 0), so no separate time-tracked threshold
-    // needs to be redefined here.
+    // 3. Reading Speed - only books with a meaningful pages/hour figure qualify.
     const speeds = perBookMetrics.filter(m => m.pagesPerHour !== null).map(m => m.pagesPerHour);
     const speedBuckets = buildDynamicBuckets(speeds, READING_SPEED_STATIC_BUCKETS, 5, "p/h");
     const readingSpeed = {
@@ -820,15 +669,11 @@ function computeLibraryDistributions(perBookMetrics) {
     return { bookLength, readingStatus, readingSpeed };
 }
 
-/*
- Renders a distribution bar chart into the given container. Shared by all
- Library Distribution charts, with only the provided data determining the
- displayed distribution.
-
- Bar height uses the same percentage shown in the label below each bar:
- percent of eligibleCount. This keeps the visual height consistent with the
- displayed count/percentage instead of scaling against only the largest
- bucket, which could make labels and bars disagree.
+/**
+ Renders a distribution bar chart. Bar height matches the same percent shown in the
+ label, so bars and labels never disagree.
+ @param {string} containerId
+ @param {{entries: Array<{label,count}>, eligibleCount: number}} distribution
 */
 function renderDistributionBarChart(containerId, distribution) {
     const container = document.getElementById(containerId);
@@ -842,9 +687,7 @@ function renderDistributionBarChart(containerId, distribution) {
 
     const bars = entries.map(e => {
         const percent = eligibleCount ? (e.count / eligibleCount) * 100 : 0;
-        // Bar height matches this same percent, with a small floor so a
-        // non-zero bucket is still visibly a bar rather than a sliver.
-        const heightPercent = e.count > 0 ? Math.max(4, percent) : 0;
+        const heightPercent = e.count > 0 ? Math.max(4, percent) : 0; // floor so non-zero bars stay visible
         return `
             <div class="dist-bar-column">
                 <div class="dist-bar-track">
@@ -965,7 +808,8 @@ async function showStatsViewState() {
                 }
             }
         } else if (book.totalSessions > 0) {
-            // Fallback for books with no real session log: same approximation used before this feature existed
+            // Fallback for books with no real session log: approximates session time from
+            // the book's total tracked reading time instead.
             sessionTime += getMeaningfulTrackedMinutes(book.timeSpentSeconds);
         }
 
@@ -979,8 +823,8 @@ async function showStatsViewState() {
         }
 
         const isRead = !!book.isRead;
-        // Was never incremented before, so "BOOKS FULLY READ" always showed 0
-        // regardless of how many books had actually been finished.
+        // Counts toward "BOOKS FULLY READ" and feeds completionsByMonth for any book
+        // marked read with a recorded completedDate.
         if (isRead) {
             readBooksCount++;
             completedBooks.push(book);
@@ -1091,7 +935,7 @@ async function showStatsViewState() {
             pagesRead,
             totalPages,
             mins,
-            pagesPerHour: mins > 0 ? (pagesRead / mins * 60) : null, // numeric, not the old formatted string
+            pagesPerHour: mins > 0 ? (pagesRead / mins * 60) : null, // numeric value, formatted for display where rendered
             completionDurationMs,
             pagesPerDay,
         });
@@ -1143,9 +987,9 @@ async function showStatsViewState() {
 
     /*
     Average reading session length prefers real recorded sessions from
-    readingSessions over the old totalSessions/timeSpentSeconds estimate.
+    readingSessions over the totalSessions/timeSpentSeconds-based estimate.
 
-    Falls back to the old approximation only for books without session
+    Falls back to that estimate only for books without session
     history, keeping older libraries from losing their average value.
     */
     const avgSessionMins = allRealSessionDurationsMins.length
@@ -1257,11 +1101,11 @@ async function showStatsViewState() {
     }
 }
 
-/*
-Handler for the "Backfill Completion Dates" button.
+/**
+ Handler for the "Backfill Completion Dates" button.
 
-Runs the bulk migration, refreshes IndexedDB data, re-renders stats, and
-reports how many books received completion dates.
+ Runs the bulk migration, refreshes IndexedDB data, re-renders stats, and
+ reports how many books received completion dates.
 */
 async function handleBackfillCompletionDatesClick() {
     const button = document.getElementById("btn-backfill-completion-dates");
@@ -1286,17 +1130,22 @@ async function handleBackfillCompletionDatesClick() {
     }
 }
 
-/*
- Renders #stats-reading-speed-progression with the four per-book metrics:
+/**
+ Renders `#stats-reading-speed-progression` with the four per-book metrics:
  Time Spent, Pages per Hour, Completion Duration, and Pages per Day.
 
  Shows completed books individually, grouped by completion month and sorted
  chronologically, so reading pace changes can be seen book by book instead
  of being hidden by monthly averages.
 
- Reuses buildFourMetricDeltas() from the per-book table instead of
+ Reuses `buildFourMetricDeltas()` from the per-book table instead of
  duplicating delta logic. Entries contain the same metric fields and always
  belong to the Completed averages group.
+
+ @param {Array<Object>} entries - Completed-book speed entries collected in
+   showStatsViewState() ({book, completedDate, pagesPerHour, ...}).
+ @param {Object} statAveragesByStatus - Averages/cutoffs keyed by status, used as the
+   delta comparison baseline for each entry and for the footer's Completed averages.
 */
 function renderReadingSpeedProgression(entries, statAveragesByStatus) {
     const container = document.getElementById("stats-reading-speed-progression");

@@ -1,112 +1,77 @@
 // =================================================================
-// TIME TRACKING ENGINE - ACTIVE MONITORING LAYER
+// TIME TRACKING
 // =================================================================
 window.addEventListener("focus", startActiveReadingTimer);
 window.addEventListener("blur", stopActiveReadingTimer);
 
-// Hoisted above the visibilitychange listener below, since that listener now needs it
-// on every hide/show pair rather than only inside checkSessionInactivityTimeout() further down.
+// Hoisted above visibilitychange, which needs it on every hide/show pair.
 const SESSION_INACTIVITY_TIMEOUT_MS = Config.Reading.SESSION_INACTIVITY_TIMEOUT_MS;
 
-/*
- focus/blur alone are the weaker signal for "is this tab actually the one being looked at"
- some window-manager / devtools / PWA window-switching cases don't fire them reliably.
- The Page Visibility API's hidden/visible state is the API actually meant for this and fires more consistently,
- so it's layered on top as a second, more reliable check covering the same "tab is selected" requirement.
-*/
-// Timestamp of the most recent hide, used below to tell a brief tab switch apart from a real
-// break: null whenever the tab isn't currently hidden.
+// The Page Visibility API's hidden/visible state is more reliable than focus/blur for
+// detecting an actually-viewed tab (some window/PWA switching cases miss focus/blur).
+// Timestamp of the most recent hide; null while not hidden.
 let hiddenAt = null;
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
         stopActiveReadingTimer();
-        saveTimeToDB(); // Flush the exact trailing seconds before the tab goes away
+        saveTimeToDB();
         hiddenAt = Date.now();
         /*
-        No endReadingSession() call here anymore: ending the session on every hide meant
-        switching tabs for even a few seconds fragmented one continuous sitting into several
-        short session records, each independently vulnerable to being misjudged as noise.
-        Instead, the decision is deferred to the visible branch below, based on how long the
-        tab was actually away - a short switch resumes the same session, only a gap past
-        SESSION_INACTIVITY_TIMEOUT_MS is treated as a real break.
+        No endReadingSession() here: ending on every hide would fragment one sitting into
+        several short, noise-prone session records. The decision is deferred to the
+        visible branch below, based on how long the tab was actually away.
         */
     } else if (document.hasFocus()) {
         if (hiddenAt !== null) {
             const awayMs = Date.now() - hiddenAt;
             if (awayMs >= SESSION_INACTIVITY_TIMEOUT_MS) {
-                endReadingSession("hidden-timeout"); // Away long enough to count as a real break
+                endReadingSession("hidden-timeout");
             }
-            // Else: away only briefly, so the current session just continues uninterrupted
             hiddenAt = null;
         }
         startActiveReadingTimer();
     }
 });
 
-// Extra insurance for desktop users closing the tab outright rather than
-// switching away from it - visibilitychange covers the switch-away case above,
-// this covers the close-outright case that visibilitychange isn't guaranteed to catch.
+// Covers closing the tab outright, which visibilitychange isn't guaranteed to catch.
 window.addEventListener("beforeunload", () => {
     saveTimeToDB();
-    endReadingSession("unload"); // Tab is actually closing, so there's nothing to resume - always end the session here
+    endReadingSession("unload");
 });
 
 const IDLE_THRESHOLD_MS = Config.Sync.IDLE_THRESHOLD_MS;
-// If no user activity is detected for this long, the tab is considered "abandoned" and time tracking pauses
-
 const DB_UPDATE_FREQUENCY = Config.Sync.CLOUD_PROGRESS_PUSH_INTERVAL_MS / 1000;
 const TRACKING_TICK_MS = Config.Reading.TRACKING_TICK_MS;
 
 let lastActivityTime = Date.now();
 let pauseTracking = false;
 
-// Tracks physical activity or autoscroller movement, so the timer can
-// distinguish active reading from an abandoned focused tab.
 function recordUserActivity() {
     lastActivityTime = Date.now();
-    /*
-     Starts or extends the real reading session tracker. The first activity
-     after opening starts a session, while later activity updates the
-     inactivity timeout used to detect session end.
-    */
     continueOrStartReadingSession();
 }
 window.addEventListener("mousemove", recordUserActivity);
 window.addEventListener("keydown", recordUserActivity);
-// If the autoscroller scrolls a different element than this, update the id below to match
 document.getElementById("reader-container")?.addEventListener("scroll", recordUserActivity);
-/*
- Captures clicks that other activity listeners miss, such as progress bar
- changes, chapter banner buttons, or note selection actions.
-
- These interactions count as reading engagement, so they should reset the
- idle timer and start a session when needed.
-*/
 document.getElementById("reader-container")?.addEventListener("click", recordUserActivity);
 
+/**
+ Runs the reading-timer heartbeat: advances timeSpentSeconds while the reader is
+ genuinely active, and checks the session-inactivity timeout each tick.
+ */
 function startActiveReadingTimer() {
     if (focusedTimeTrackerHeartbeatInterval) return;
     focusedTimeTrackerHeartbeatInterval = setInterval(() => {
-        // Condition: Must be inside a book workspace layer, and tab window must be active focus target
         const readerActive = document.getElementById("reader-view").classList.contains("active");
         const isUserActive = (Date.now() - lastActivityTime) < IDLE_THRESHOLD_MS;
         if (readerActive && activeBookObject && document.hasFocus() && !document.hidden && isUserActive && !pauseTracking) {
             if (!activeBookObject.timeSpentSeconds) activeBookObject.timeSpentSeconds = 0;
-            activeBookObject.timeSpentSeconds += (TRACKING_TICK_MS / 1000); // Increments ticker loop heartbeat frequency step bounds
-            /*
-            Batches DB writes every 30 seconds instead of every tick to reduce disk I/O.
-            The in-memory book stays accurate on every tick; visibilitychange and
-            beforeunload handlers flush remaining time before the tab hides or closes.
-            */
+            activeBookObject.timeSpentSeconds += (TRACKING_TICK_MS / 1000);
+            // Batches DB writes instead of writing every tick, to reduce disk I/O.
             if (activeBookObject.timeSpentSeconds % DB_UPDATE_FREQUENCY === 0) {
                 saveTimeToDB();
             }
         }
-        /*
-        Session inactivity is checked every tick regardless of isUserActive.
-        The activity gate only pauses time tracking; inactive sessions still need
-        checking against the longer 5-minute session timeout.
-        */
         checkSessionInactivityTimeout();
     }, TRACKING_TICK_MS);
 }
@@ -127,9 +92,10 @@ function pauseActiveReadingTimer(pause = true){
     pauseTracking = pause;
 }
 
-// Writes the in-memory timeSpentSeconds value to the book's DB record. Pulled
-// out as its own function so the batched ticker and the hide/close safety
-// nets above all go through the exact same save path.
+/**
+ Writes timeSpentSeconds to the book's DB record and flushes the open reading-history
+ segment alongside it.
+ */
 function saveTimeToDB() {
     if (!activeBookObject || !activeBookObject.id) return;
     const timeSpent = activeBookObject.timeSpentSeconds;
@@ -145,33 +111,26 @@ function saveTimeToDB() {
         }
     };
 
-    /*
-    Reuses the existing DB update cadence to flush the open reading-history
-    segment, avoiding a separate interval. Active reading stays within one save
-    cycle of being persisted.
-    */
     if (typeof persistHistorySegment === "function") persistHistorySegment();
 
     activeBookObject.lastModified = now;
 }
 
 /*
- REAL READING-SESSION LIFECYCLE ENGINE
+ REAL READING-SESSION LIFECYCLE
 
  Separate from recordReadingSessionStart() (02-db.js), which only updates
- firstOpened/lastOpened on launch. This tracks actual engaged reading
- activity, appending to readingSessions and incrementing totalSessions
- only once a session is judged real - see appendReadingSession() in 02-db.js.
+ firstOpened/lastOpened on launch. This tracks actual engaged reading activity via
+ readingSessions/totalSessions - see appendReadingSession() in 02-db.js.
 
- Sessions start on first interaction, continue while activity stays within
- the timeout window, and end on close, tab exit, or inactivity timeout,
- saving through appendReadingSession(). SESSION_INACTIVITY_TIMEOUT_MS is
- declared near the top of the file, alongside the visibilitychange listener
- that also needs it.
+ Sessions start on first interaction, continue while activity stays within the timeout
+ window, and end on close, tab exit, or inactivity timeout.
 */
 
-// Starts a session on first interaction or extends the active session clock.
-// No-op when the reader is inactive, another view is open, or no book is loaded.
+/**
+ Starts a session on first interaction, or extends the active session's inactivity clock.
+ No-op when the reader is inactive, another view is open, or no book is loaded.
+ */
 function continueOrStartReadingSession() {
     const readerActive = document.getElementById("reader-view")?.classList.contains("active");
     if (!readerActive || !activeBookObject) return;
@@ -180,17 +139,9 @@ function continueOrStartReadingSession() {
     if (currentSessionStartTime === null) {
         currentSessionStartTime = now;
         currentSessionStartChapterPointer = activeSpinePointer;
-        // lastKnownBookScalePct is only updated when trackReadingProgress() actually runs,
-        // so without this call it could still be holding a stale value (0, or left over from a previously open book)
-        // if this is the very first interaction since opening the reader
-        // causing a phantom jump in pagesRead once trackReadingProgress() eventually does run.
-        // Calling it here guarantees the baseline reflects the book's actual current position.
+        // Ensures the book-scale % baseline is current, not a stale/previous-book value.
         if (typeof trackReadingProgress === "function") trackReadingProgress();
         currentSessionStartBookScalePct = lastKnownBookScalePct;
-        // Opens the matching raw reading-history segment for the calendar
-        // heatmap - see 17-reading-history.js. Started at exactly the same
-        // moment as the session itself, and closed alongside it below in
-        // endReadingSession().
         if (typeof startHistorySegment === "function") {
             startHistorySegment(activeBookObject.id, activeSpinePointer);
         }
@@ -198,33 +149,19 @@ function continueOrStartReadingSession() {
     currentSessionLastInteractionTime = now;
 }
 
-/*
- Periodic check for the inactivity-timeout session boundary. Piggybacks on
- the same TICK_MS heartbeat interval already running for time-tracking
- (started/stopped alongside it in startActiveReadingTimer/stopActiveReadingTimer
- below) rather than a second interval, since both need to run at the same
- cadence and under the same "reader is actually active" condition.
-*/
 function checkSessionInactivityTimeout() {
-    if (currentSessionStartTime === null) return; // No open session to time out
+    if (currentSessionStartTime === null) return;
     const idleFor = Date.now() - currentSessionLastInteractionTime;
     if (idleFor >= SESSION_INACTIVITY_TIMEOUT_MS) {
         endReadingSession("inactivity");
     }
 }
 
-/*
- Closes and persists the active reading session through appendReadingSession().
- Safe to call from cleanup paths because it does nothing when no session is
- open. reason is only used for debugging.
-*/
+/**
+ Closes and persists the active reading session through appendReadingSession(). Safe to
+ call from cleanup paths because it does nothing when no session is open.
+ */
 function endReadingSession(reason) {
-    /*
-    Finalizes the raw reading-history segment at the same points as session
-    endings: close, tab exit, inactivity timeout, or book switch.
-
-    Called before early returns because it independently handles open segments.
-    */
     if (typeof closeHistorySegment === "function") closeHistorySegment();
 
     if (currentSessionStartTime === null || !activeBookObject || !activeBookObject.id) {
@@ -238,13 +175,8 @@ function endReadingSession(reason) {
     const endTime = Date.now();
     const durationSeconds = Math.round((endTime - currentSessionStartTime) / 1000);
 
-    /*
-     Sessions under a few seconds aren't meaningful reading sessions - most
-     often they're an accidental open/close or this function firing twice
-     in quick succession (e.g. visibilitychange then beforeunload). Skipping
-     these keeps readingSessions from filling up with noise entries that
-     would drag the average session length down artificially.
-    */
+    // Sessions under a few seconds are noise (accidental open/close, or a double-fire),
+    // not meaningful reading sessions.
     if (durationSeconds < 3) {
         currentSessionStartTime = null;
         currentSessionLastInteractionTime = null;
@@ -253,17 +185,15 @@ function endReadingSession(reason) {
         return;
     }
 
-    // Approximate pages read this session from the whole-book scroll percentage delta
-    // (as tracked by trackReadingProgress() in 10-reader-controls.js), scaled against the book's cached page count.
-    // Using the book-scale % instead of chapters-crossed means real scroll progress inside a single long chapter still counts as pages read,
-    // instead of only registering once a chapter boundary is crossed.
+    // Approximates pages read from the whole-book scroll % delta, scaled against the
+    // book's cached page count.
     const totalPages = activeBookObject.totalPages || 0;
     let pagesRead = 0;
     if (totalPages > 0 && currentSessionStartBookScalePct !== null && lastKnownBookScalePct !== null) {
         const pctAdvanced = Math.max(0, lastKnownBookScalePct - currentSessionStartBookScalePct);
         pagesRead = Math.round((pctAdvanced / 100) * totalPages);
     } else {
-        // Fallback: chapters-crossed estimate, used when book-scale % tracking isn't available
+        // Fallback: chapters-crossed estimate, used when book-scale % isn't available
         const chapterCount = activeBookObject.chapterCount || 0;
         if (chapterCount > 0 && totalPages > 0 && currentSessionStartChapterPointer !== null) {
             const chaptersAdvanced = Math.max(0, activeSpinePointer - currentSessionStartChapterPointer);
@@ -289,8 +219,13 @@ function endReadingSession(reason) {
 }
 
 // =================================================================
-// DYNAMIC 3-DOTS OPTIONS FLYOUT CONTROLLER CONTEXT ENGINE
+// BOOK CONTEXT MENU (3-DOTS FLYOUT)
 // =================================================================
+/**
+ Opens the 3-dots flyout for a book card and positions it near the trigger event.
+ @param {MouseEvent} event - Click event on the 3-dots trigger.
+ @param {number} bookIndexId - id of the book this menu is for.
+ */
 function toggleBookContextMenuFlyout(event, bookIndexId) {
     event.preventDefault();
     event.stopPropagation();
@@ -298,12 +233,8 @@ function toggleBookContextMenuFlyout(event, bookIndexId) {
     currentActiveContextBookIndexId = bookIndexId;
     const menu = document.getElementById("book-context-menu");
 
-    /*
-    The "Estimate Completion Date" action only applies to read books missing a
-    completedDate, such as older records from before that field existed.
-    "Clear Completion Date" is shown whenever a date exists, regardless of read
-    status, so manually added dates can always be removed.
-    */
+    // "Estimate Completion Date" only applies to read books missing a completedDate.
+    // "Clear Completion Date" is shown whenever a date exists, regardless of read status.
     const targetBookObj = loadedBooksMemory.find((b) => b.id === bookIndexId);
     const backfillRow = document.getElementById("context-item-backfill-completion");
     if (backfillRow) {
@@ -316,12 +247,8 @@ function toggleBookContextMenuFlyout(event, bookIndexId) {
         clearRow.style.display = hasDate ? "" : "none";
     }
 
-    // Flips to the left of the dots trigger (or clamps vertically) if the
-    // default placement would run off the edge of the viewport - see
-    // positionFlyoutMenu in 14-utils.js.
     positionFlyoutMenu(menu, event);
 
-    // Wire listener to capture closing ticks anywhere across workspace window scopes
     document.addEventListener("click", closeBookContextMenuFlyoutOnceOutside);
 }
 
@@ -330,7 +257,10 @@ function closeBookContextMenuFlyoutOnceOutside() {
     document.removeEventListener("click", closeBookContextMenuFlyoutOnceOutside);
 }
 
-// Route target operations commands parsed through contextual components choices
+/**
+ Dispatches a context-menu action for the book targeted by currentActiveContextBookIndexId.
+ @param {string} actionKey - Which action to run; see the switch cases for valid values.
+ */
 function triggerContextAction(actionKey) {
     const targetBookObj = loadedBooksMemory.find(b => b.id === currentActiveContextBookIndexId);
     if (!targetBookObj) return;
@@ -342,13 +272,16 @@ function triggerContextAction(actionKey) {
                 transaction.objectStore(Config.Db.STORE_BOOKS).delete(targetBookObj.id);
                 transaction.oncomplete = () => {
                     fetchLocalLibrary();
-                    if (typeof deleteBookFromCloud === "function") {deleteBookFromCloud(targetBookObj.id);}
-                }; } break;
+                    if (typeof deleteBookFromCloud === "function") deleteBookFromCloud(targetBookObj.id);
+                };
+            }
+            break;
         case "toggleRead":
             updateBookRecord(targetBookObj.id, (r) => {
                 r.isRead = !r.isRead;
                 r.completedDate = r.isRead ? (r.completedDate || new Date().getTime()) : null;
-            }).then(() => fetchLocalLibrary()); break;
+            }).then(() => fetchLocalLibrary());
+            break;
         case "backfillCompletionDate":
             migrateSingleBookCompletionDate(targetBookObj.id).then((wasUpdated) => {
                 if (wasUpdated) {
@@ -356,21 +289,27 @@ function triggerContextAction(actionKey) {
                 } else {
                     alert("This book doesn't need a completion date backfill (already has one, or isn't marked read).");
                 }
-            }); break;
+            });
+            break;
         case "editStartDate":
-            openStartDateModal(targetBookObj); break;
+            openStartDateModal(targetBookObj);
+            break;
         case "editCompletionDate":
-            openCompletionDateModal(targetBookObj); break;
+            openCompletionDateModal(targetBookObj);
+            break;
         case "clearCompletionDate":
             setBookCompletionDate(targetBookObj.id, null).then((wasUpdated) => {
                 if (wasUpdated) refreshLibraryAndVisibleStats();
-            }); break;
+            });
+            break;
         case "editRawData":
-            openEditRawDataModal(targetBookObj); break;
+            openEditRawDataModal(targetBookObj);
+            break;
         case "metadata":
         case "stats":
-            openBookDiagnosticsModal(targetBookObj, actionKey); break;
-        case "group":
+            openBookDiagnosticsModal(targetBookObj, actionKey);
+            break;
+        case "group": {
             if (loadedGroupsMemory.length === 0) {
                 alert("No groups exist yet. Create one first with \"📁 New Group\".");
                 return;
@@ -389,20 +328,24 @@ function triggerContextAction(actionKey) {
                 const matchesRealGroup = loadedGroupsMemory.some((g) => g.id === parsed);
                 if (!matchesRealGroup) {
                     alert("That's not a valid group ID.");
-                    return; }
-                newGroupId = parsed; }
+                    return;
+                }
+                newGroupId = parsed;
+            }
             updateBookRecord(targetBookObj.id, (r) => {
                 r.groupId = newGroupId;
-            }).then(() => fetchLocalLibrary()); break;
+            }).then(() => fetchLocalLibrary());
+            break;
+        }
         default:
             console.warn(`Unknown context action: ${actionKey}`);
     }
 }
-/*
- Shared refresh path for completion-date actions (edit, clear, and estimate).
- Reloads loadedBooksMemory and refreshes the open stats view if needed, so
- completion-based stats update without requiring navigation away and back.
-*/
+/**
+ Shared refresh path for completion-date actions. Reloads loadedBooksMemory and
+ refreshes the open stats view if needed.
+ @param {boolean} [goToStats=true] - Whether to also refresh the stats view if it's open.
+ */
 function refreshLibraryAndVisibleStats(goToStats = true) {
     fetchLocalLibrary();
     const statsPanel = document.getElementById("stats-view");
@@ -495,11 +438,9 @@ function submitCompletionDateModalForm() {
 }
 
 // =================================================================
-// RAW DATA EDIT MODAL
-// Direct edit access to a book's stored IndexedDB fields (title, time
-// spent, session count, progress pointers, etc.) for manual corrections
-// that don't have their own dedicated UI, such as fixing a mis-imported
-// title or a time-tracking figure thrown off by a bug.
+// EDIT RAW DATA MODAL
+// Direct edit access to a book's stored IndexedDB fields for manual corrections that
+// don't have their own dedicated UI.
 // =================================================================
 function openEditRawDataModal(bookObj) {
     document.getElementById("edit-raw-data-book-id").value = bookObj.id;
@@ -531,15 +472,13 @@ function submitEditRawDataModalForm() {
         return;
     }
 
-    // Parses a numeric field input, falling back to 0 for blank/invalid entries
-    // rather than writing NaN into the record.
+    // Falls back to 0 for blank/invalid entries rather than writing NaN.
     const parseIntFieldOrZero = (elementId) => {
         const raw = document.getElementById(elementId).value;
         const parsed = parseInt(raw, 10);
         return Number.isFinite(parsed) ? parsed : 0;
     };
-    // Same as above, but preserves null for optional fields (totalPages etc.)
-    // left blank, instead of coercing them to 0.
+    // Same, but preserves null for optional fields left blank instead of coercing to 0.
     const parseIntFieldOrNull = (elementId) => {
         const raw = document.getElementById(elementId).value;
         if (raw === "") return null;
@@ -566,10 +505,7 @@ function submitEditRawDataModalForm() {
         record.totalWords = totalWords;
         record.chapterCount = chapterCount;
         record.isRead = isReadChecked;
-        // Clears completedDate if the book was manually un-marked as read,
-        // mirroring the same rule the "Toggle Read Status" action already
-        // applies, so this modal can't leave a completedDate stranded on a
-        // book that's no longer marked as read.
+        // Clears completedDate when un-marked as read, mirroring "Toggle Read Status".
         if (!isReadChecked) {
             record.completedDate = null;
         } else if (!record.completedDate) {
@@ -577,10 +513,7 @@ function submitEditRawDataModalForm() {
         }
     }).then((updatedRecord) => {
         if (updatedRecord) {
-            // Keep the in-memory active book (if this is the one currently
-            // open in the reader) consistent with what was just saved. Copies
-            // straight off the record updateBookRecord() resolved with,
-            // instead of re-deriving each field from the form a second time.
+            // Keep activeBookObject in sync if this is the book currently open in the reader.
             if (activeBookObject && activeBookObject.id === bookId) {
                 Object.assign(activeBookObject, updatedRecord);
             }
@@ -592,7 +525,11 @@ function submitEditRawDataModalForm() {
     });
 }
 
-// Formats a Date as the YYYY-MM-DD string <input type="date"> requires, in local time
+/**
+ Formats a Date as YYYY-MM-DD in local time, for <input type="date">.
+ @param {Date} dateObj
+ @returns {string}
+ */
 function toDateInputValue(dateObj) {
     const y = dateObj.getFullYear();
     const m = String(dateObj.getMonth() + 1).padStart(2, "0");
@@ -600,8 +537,14 @@ function toDateInputValue(dateObj) {
     return `${y}-${m}-${d}`;
 }
 // =================================================================
-// PER-BOOK DIAGNOSTICS DISPLAY PARSING ROUTINES
+// PER-BOOK DIAGNOSTICS MODAL
 // =================================================================
+/**
+ Opens the book diagnostics modal in metadata mode (parses the EPUB for
+ title/creator/language) or stats mode (reads cached word/page/chapter/time metrics).
+ @param {object} bookObj - Book record to inspect.
+ @param {"metadata"|"stats"} modeType - Which panel to show.
+ */
 async function openBookDiagnosticsModal(bookObj, modeType) {
     const dialog = document.getElementById("book-metrics-modal");
     const title = document.getElementById("metrics-modal-title");
@@ -612,12 +555,7 @@ async function openBookDiagnosticsModal(bookObj, modeType) {
     dialog.showModal();
 
     if (modeType === 'metadata') {
-        /*
-         Title/creator/language aren't cached on the book record (only the
-         performance-metrics numbers below are), so this branch still opens
-         the zip - just only when metadata mode is actually what was asked
-         for, instead of unconditionally for both modes.
-        */
+        // Title/creator/language aren't cached on the book record, so this opens the zip.
         try {
             const zip = await JSZip.loadAsync(bookObj.fileData);
             const { opfDoc } = await openEpubContainer(zip);
@@ -639,14 +577,8 @@ async function openBookDiagnosticsModal(bookObj, modeType) {
         return;
     }
 
-    /*
-     Stats mode. Previously this reparsed the entire EPUB (unzip, walk the
-     spine, strip HTML, count words) every single time this modal opened.
-     That work now happens once - at import, or via the migration pass for
-     older books - and is just read straight off the book record here.
-     ensureBookMetadataCached() is a no-op if this book already has cached
-     numbers, so no zip ever gets opened for a book that's been migrated.
-    */
+    // Stats mode: reads cached numbers instead of reparsing the EPUB each time.
+    // ensureBookMetadataCached() is a no-op if this book already has cached numbers.
     try {
         const freshBook = await ensureBookMetadataCached(bookObj);
         const computedMinutes = getMeaningfulTrackedMinutes(freshBook.timeSpentSeconds);

@@ -1,6 +1,12 @@
 // =================================================================
 // EPUB IMPORT
 // =================================================================
+/**
+ Imports one or more EPUB files into the library. Wired as the `onchange` handler of
+ the EPUB file input. Processes files sequentially to keep memory usage predictable,
+ then refreshes the library view.
+ @param {Event} event - The file input's change event.
+ */
 async function handleFileImport(event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -9,11 +15,10 @@ async function handleFileImport(event) {
     const totalFiles = files.length;
 
     /*
-    Files are processed sequentially instead of in parallel. Each import
-    unzips a potentially large EPUB, parses XML, and decodes images, so
-    parallel processing could spike memory usage on large batches.
-    Sequential handling keeps memory predictable at the cost of slower total
-    import time.
+    Files are processed sequentially instead of in parallel. Each import unzips a
+    potentially large EPUB, parses XML, and decodes images, so parallel processing could
+    spike memory usage on large batches. Sequential handling keeps memory predictable at
+    the cost of slower total import time.
     */
     for (let i = 0; i < totalFiles; i++) {
         const file = files[i];
@@ -48,9 +53,9 @@ async function handleFileImport(event) {
                 }
             }
             /*
-            Word/page/chapter counting reuses the already-parsed zip and opfDoc instead
-            of reopening the EPUB. Later screens can read cached values instead of
-            reparsing files.
+            Word/page/chapter counting reuses the already-parsed zip and opfDoc instead of
+            reopening the EPUB. Later screens can read cached values instead of reparsing
+            files.
             */
             const analysisMeta = await computeEpubWordStats(zip, opfDoc, opfPath);
 
@@ -59,14 +64,14 @@ async function handleFileImport(event) {
             await saveBookToDatabase(title, coverBase64, file, analysisMeta);
 
         } catch (err) {
-            console.error(`Failed parsing compilation profile for file: ${file.name}`, err);
+            console.error(`Failed parsing EPUB file: ${file.name}`, err);
         }
     }
 
     // Reset the upload label back to its default, non-progress text
     label.innerText = "➕ Import EPUB";
-    event.target.value = ""; // Clear the file input so the same file can be re-selected later
-    
+    event.target.value = ""; // Clear the file input so the same file can be re-selected
+
     // Reload the library view so the newly imported books show up on screen
-    fetchLocalLibrary(); 
+    fetchLocalLibrary();
 }

@@ -20,7 +20,7 @@ firebase.initializeApp(Config.firebaseConfig);
 const fbAuth = firebase.auth();
 const fbDb = firebase.firestore();
 
-/*
+/**
  Firestore's offline-persistence cache is intentionally left disabled -
  IndexedDB is already the durable local store, and a stuck write queue in
  that cache would replay and flood the write stream on every reload.
@@ -36,15 +36,11 @@ let booksListenerUnsub = null;
 let groupsListenerUnsub = null;
 let initialSyncInProgress = false;
 
-/*
- Generic per-key throttle used by pushGroupToCloud (and available for any
- future caller that needs the same "at most once per
- CLOUD_PROGRESS_PUSH_INTERVAL_MS" behavior already used for book progress
- pushes in 02-db.js). Without this function existing, any call to
- pushGroupToCloud() throws a ReferenceError and silently breaks group
- creation/editing sync to the cloud.
-*/
 let lastThrottledCloudPush = {};
+/**
+ Generic per-key throttle used by pushGroupToCloud (and available for any future caller needing the same  
+ "at most once per `CLOUD_PROGRESS_PUSH_INTERVAL_MS`" behavior already used for book progress pushes).
+*/
 function throttledCloudPush(key, pushFn) {
   const now = Date.now();
   const last = lastThrottledCloudPush[key] || 0;
@@ -61,7 +57,7 @@ function throttledCloudPush(key, pushFn) {
 */
 let syncedUid = null;
 
-// Tracks how many Firestore writes are actually being issued, for visibility while debugging.
+// Tracks how many Firestore writes are actually issued, for visibility while debugging.
 let cloudWriteCount = 0;
 function logCloudWrite(label) {
   cloudWriteCount++;
@@ -72,6 +68,7 @@ function logCloudWrite(label) {
 // AUTH
 // -----------------------------------------------------------------
 
+/** Opens a Google sign-in popup and starts the cloud sync flow on success. */
 function signInWithGoogle() {
   const provider = new firebase.auth.GoogleAuthProvider();
 
@@ -87,6 +84,7 @@ fbAuth.getRedirectResult().catch((err) => {
   }
 });
 
+/** Signs out of Firebase and resets sync state so a future sign-in triggers a fresh catch-up pass. */
 function signOutOfSync() {
   syncedUid = null;
   fbAuth.signOut();
@@ -108,6 +106,7 @@ fbAuth.onAuthStateChanged((user) => {
   }
 });
 
+/** Updates sync status text and sign-in/out button state based on currentUser presence. */
 function updateSyncUI() {
   const statusEl = document.getElementById("sync-status");
   const btnEl = document.getElementById("btn-sync-signin");
@@ -130,21 +129,18 @@ function booksCollection() {
 function groupsCollection() {
   return fbDb.collection("users").doc(currentUser.uid).collection("groups");
 }
-// Notes and note-tags get their own collections, same "one doc per local
-// IndexedDB row, doc id = local numeric id as a string" pattern already
-// used for books/groups above.
+// Notes and note-tags get their own collections, same "one doc per local IndexedDB row, doc id = local
+// numeric id as a string" pattern used for books/groups above.
 function notesCollection() {
   return fbDb.collection("users").doc(currentUser.uid).collection("notes");
 }
 function noteTagsCollection() {
   return fbDb.collection("users").doc(currentUser.uid).collection("noteTags");
 }
-/*
- Settings/preferences (currently: the Notes page's collapsed-tag-sections
- layout and the last-used tag selection - see Config.Db.*_STORAGE_KEY in
- 00-config.js) don't need their own subcollection the way books/notes do;
- there's only ever one of them per user, so they live as plain fields on
- the user's root doc instead.
+/**
+ Settings/preferences (the Notes page's collapsed-tag-sections layout and the last-used tag selection)
+ don't need their own subcollection the way books/notes do; there's only ever one per user, so they live
+ as plain fields on the user's root doc instead.
 */
 function userDoc() {
   return fbDb.collection("users").doc(currentUser.uid);
@@ -152,19 +148,21 @@ function userDoc() {
 
 /*
  PUSH RELIABILITY: retry queue + failure surfacing
- Every pushXToCloud() is called fire-and-forget elsewhere (no await/catch),
- so a rejected push used to fail silently with no retry until the next
- full sign-in/reload sync. withPushRetry() wraps a push so it: never
- throws to its fire-and-forget caller, logs failures and surfaces them via
- a small status indicator (showCloudSyncFailureNotice()), and retries with
- backoff a few times before queuing - drained on interval, on the next
- sync pass, or whenever a same-kind push next succeeds.
+ Every pushXToCloud() is called fire-and-forget elsewhere (no await/catch), so a rejected push would fail
+ silently with no retry until the next full sync. withPushRetry() wraps a push so it never throws to its
+ fire-and-forget caller, logs failures and surfaces them via a small status indicator
+ (showCloudSyncFailureNotice()), and retries with backoff a few times before queuing - drained on
+ interval, on the next sync pass, or whenever a same-kind push next succeeds.
 */
 let pendingCloudPushRetries = [];
 const PUSH_RETRY_IMMEDIATE_ATTEMPTS = Config.Sync.PUSH_RETRY_IMMEDIATE_ATTEMPTS; // quick retries before falling back to the queue
 const PUSH_RETRY_IMMEDIATE_DELAY_MS = Config.Sync.PUSH_RETRY_IMMEDIATE_DELAY_MS;
 const PUSH_RETRY_QUEUE_DRAIN_INTERVAL_MS = Config.Sync.PUSH_RETRY_QUEUE_DRAIN_INTERVAL_MS;
 
+/**
+  Runs a push attempt with a few immediate retries before giving up and queuing it for later.
+  Never throws - returns true on success, false if it had to be queued.
+ */
 async function withPushRetry(label, attemptFn) {
   for (let attempt = 0; attempt <= PUSH_RETRY_IMMEDIATE_ATTEMPTS; attempt++) {
     try {
@@ -187,20 +185,17 @@ async function withPushRetry(label, attemptFn) {
   return false;
 }
 
-// Drains whatever's currently queued, in the order it failed. Called on an
-// interval below, and also right after pullInitialSyncFromCloud() so a
-// reload/re-sign-in gives failed pushes an immediate extra chance rather
-// than waiting for the next interval tick.
+/**
+  Drains whatever's currently queued for retry, in the order it failed. Called on an interval, and also
+  right after a sync pull so a reload/re-sign-in gives failed pushes an immediate extra chance.
+ */
 async function drainPendingCloudPushRetries() {
   if (!currentUser || pendingCloudPushRetries.length === 0) return;
   const queue = pendingCloudPushRetries;
   pendingCloudPushRetries = [];
   for (const item of queue) {
-    const succeeded = await withPushRetry(item.label, item.attemptFn);
-    if (!succeeded) {
-      // withPushRetry() already re-queued it (with a fresh addedAt) if it
-      // failed again - nothing further to do here.
-    }
+    // withPushRetry() already re-queues on failure (with a fresh addedAt) - nothing further to do here.
+    await withPushRetry(item.label, item.attemptFn);
   }
   updateCloudSyncFailureNotice();
 }
@@ -209,12 +204,11 @@ setInterval(() => {
   drainPendingCloudPushRetries();
 }, PUSH_RETRY_QUEUE_DRAIN_INTERVAL_MS);
 
-/*
- Small, non-blocking status text next to the existing sign-in/sync status
- indicator (#sync-status, see updateSyncUI() below) - deliberately not an
- alert() or anything else that interrupts reading, since a single
- transient push failure that's about to succeed on retry doesn't warrant
- interrupting the user, but a growing queue is worth being visible about.
+/**
+ Small, non-blocking status text next to the existing sign-in/sync status indicator (#sync-status) -
+ deliberately not an alert() or anything else that interrupts reading, since a single transient push
+ failure that's about to succeed on retry doesn't warrant interrupting the user, but a growing queue is
+ worth being visible about.
 */
 function showCloudSyncFailureNotice(label, queueLength) {
   console.warn(`[FirebaseSync] queued for retry (${queueLength} pending): ${label}`);
@@ -234,14 +228,12 @@ function updateCloudSyncFailureNotice() {
 // -----------------------------------------------------------------
 // PUSH: local change -> cloud
 // -----------------------------------------------------------------
+/** Pushes a book's metadata (progress, reading history, cached analysis) to Firestore, merging fields. */
 async function pushBookMetadataToCloud(book) {
   if (!currentUser || !book || book.id == null) return;
-  // Read isRead with a fallback rather than mutating the caller's object -
-  // book is very often a live reference into loadedBooksMemory (see
-  // pullInitialSyncFromCloud(), Hard Push, and Soft Sync in
-  // 15-danger-zone.js/16-soft-sync.js), so writing back into it here would
-  // silently change what the library grid/stats view renders without
-  // going through any of the app's normal "this changed, re-render" paths.
+  // Read isRead with a fallback rather than mutating the caller's object - book is often a live reference
+  // into loadedBooksMemory, so writing back into it here would silently change what the library
+  // grid/stats view renders without going through any of the app's normal "this changed, re-render" paths.
   const isReadValue = book.isRead ?? false;
   await withPushRetry(`book metadata #${book.id}`, async () => {
     logCloudWrite(`book metadata #${book.id}`);
@@ -259,22 +251,18 @@ async function pushBookMetadataToCloud(book) {
           groupId: book.groupId ?? null,
           lastModified: book.lastModified || Date.now(),
           timeSpentSeconds: book.timeSpentSeconds ?? 0,
-          // Cached EPUB analysis - see ensureBookMetadataCached() in 06-epub-reader.js.
+          // Cached EPUB analysis.
           totalPages: book.totalPages ?? null,
           totalWords: book.totalWords ?? null,
           chapterCount: book.chapterCount ?? null,
-          // Reading-history fields - see recordReadingSessionStart() and markBookAsRead() in 02-db.js.
+          // Reading-history fields.
           firstOpened: book.firstOpened ?? null,
           lastOpened: book.lastOpened ?? null,
           completedDate: book.completedDate ?? null,
           totalSessions: book.totalSessions ?? 0,
-          // Real per-session log - see appendReadingSession() in 02-db.js and
-          // the session lifecycle engine in 09-stats-and-context-menu.js.
+          // Real per-session log.
           readingSessions: book.readingSessions ?? [],
-          // Raw per-session activity log powering the reading-activity
-          // calendar heatmap (see 13-reading-history.js) - previously never
-          // left this device, so the heatmap/streaks would silently reset on
-          // every other device even though the data existed on this one.
+          // Raw per-session activity log powering the reading-activity calendar heatmap.
           readingHistory: book.readingHistory ?? [],
         },
         { merge: true },
@@ -282,6 +270,7 @@ async function pushBookMetadataToCloud(book) {
   });
 }
 
+/** Uploads a book's EPUB file to Firestore as base64 chunks, deleting any now-stale trailing chunks. */
 async function pushBookFileToCloud(book) {
   if (!currentUser || !book || !book.fileData) return;
 
@@ -296,13 +285,10 @@ async function pushBookFileToCloud(book) {
     chunks.push(base64DataUrl.slice(i, i + FILE_CHUNK_SIZE));
   }
 
-  // The whole upload is safe to retry wholesale on failure: chunk writes
-  // are idempotent .set() calls (re-uploading chunk 3 just overwrites
-  // chunk 3 with the same data), and chunkCount is deliberately written
-  // last, only once every chunk has actually landed - see the chunkCount
-  // check in downloadBookFromCloud() and the Soft Sync comparison in
-  // 16-soft-sync.js, both of which treat a missing/stale chunkCount as
-  // "this upload didn't finish, don't trust it yet".
+  // The whole upload is safe to retry wholesale on failure: chunk writes are idempotent .set() calls
+  // (re-uploading chunk 3 just overwrites chunk 3 with the same data), and chunkCount is deliberately
+  // written last, only once every chunk has actually landed - callers treat a missing/stale chunkCount
+  // as "this upload didn't finish, don't trust it yet".
   await withPushRetry(`book file #${book.id}`, async () => {
     const chunkCollection = booksCollection()
       .doc(String(book.id))
@@ -328,27 +314,21 @@ async function pushBookFileToCloud(book) {
 }
 
 /*
- Group pushes go through the same shared throttle used elsewhere for book
- reading-progress pushes, so rapid edits to a group (renaming it, changing
- its color repeatedly, etc.) still result in no more than one Firestore
- write per group every 20 seconds.
+ Group pushes go through the same shared throttle used elsewhere for book reading-progress pushes, so
+ rapid edits to a group (renaming it, changing its color repeatedly, etc.) still result in no more than
+ one Firestore write per group every 20 seconds.
 
- After a successful push, the freshly-stamped lastModified is written back
- into the local IndexedDB record too (see stampLocalGroupLastModified()
- below). This is what lets pullInitialSyncFromCloud() actually compare
- local vs. remote lastModified for groups the same way it already does for
- books (previously groups had no local lastModified at all, so the cloud
- copy always won outright on every catch-up sync - see the comparison fix
- in pullInitialSyncFromCloud() further down this file).
+ After a successful push, the freshly-stamped lastModified is written back into the local IndexedDB
+ record too (see stampLocalGroupLastModified() below). This is what lets pullInitialSyncFromCloud()
+ compare local vs. remote lastModified for groups the same way it does for books.
 */
+/** Throttled push of a group's name/color to Firestore, then stamps the local record on success. */
 async function pushGroupToCloud(group) {
   if (!currentUser || !group || group.id == null) return;
   throttledCloudPush(`group:${group.id}`, async () => {
-    // Respects an existing group.lastModified (03-groups.js now stamps this
-    // at the moment of the actual local edit/creation) rather than always
-    // minting a new one here - consistent with how pushBookMetadataToCloud
-    // treats book.lastModified. Only falls back to Date.now() for a caller
-    // that doesn't provide one at all.
+    // Respects an existing group.lastModified (stamped at the moment of the actual local edit/creation)
+    // rather than always minting a new one here, consistent with pushBookMetadataToCloud's treatment of
+    // book.lastModified. Only falls back to Date.now() for a caller that doesn't provide one at all.
     const stampedLastModified = group.lastModified || Date.now();
     const succeeded = await withPushRetry(`group #${group.id}`, async () => {
       logCloudWrite(`group #${group.id}`);
@@ -375,21 +355,15 @@ function stampLocalGroupLastModified(groupId, lastModified) {
 
 /*
  NOTES / NOTE-TAGS / SETTINGS SYNC
- Same "IndexedDB is truth, Firestore mirrors it" model as books/groups.
-
- Local notes/tags previously had no lastModified at all, so the pull
- comparison's `local.lastModified || 0` always lost to a real remote
- timestamp - the cloud copy won on every sync even when the local edit was
- newer but simply hadn't pushed yet. Fixed two ways: 12-notes.js now
- stamps lastModified on every local create/edit, and (belt-and-suspenders,
- covering forced pushes from Hard Push/Soft Sync) a successful push here
- also writes that same timestamp back locally via
- stampLocalNoteLastModified()/stampLocalNoteTagLastModified() below.
+ Same "IndexedDB is truth, Firestore mirrors it" model as books/groups. Local notes/tags stamp
+ lastModified on every local create/edit, and a successful push here also writes that same timestamp
+ back locally via stampLocalNoteLastModified()/stampLocalNoteTagLastModified() below, so the pull
+ comparison can correctly tell which side is newer instead of the cloud copy always winning.
 */
+/** Pushes a note to Firestore, then stamps the local record with the same lastModified on success. */
 async function pushNoteToCloud(note) {
   if (!currentUser || !note || note.id == null) return;
-  // Respects an existing note.lastModified (12-notes.js stamps this on
-  // every local create/edit) rather than always minting a new one here.
+  // Respects an existing note.lastModified rather than always minting a new one here.
   const stampedLastModified = note.lastModified || Date.now();
   const succeeded = await withPushRetry(`note #${note.id}`, async () => {
     logCloudWrite(`note #${note.id}`);
@@ -425,6 +399,7 @@ async function deleteNoteFromCloud(noteId) {
   await notesCollection().doc(String(noteId)).delete().catch(() => {});
 }
 
+/** Pushes a note tag to Firestore, then stamps the local record with the same lastModified on success. */
 async function pushNoteTagToCloud(tag) {
   if (!currentUser || !tag || tag.id == null) return;
   // Same treatment as pushNoteToCloud above.
@@ -459,12 +434,10 @@ async function deleteNoteTagFromCloud(tagId) {
   await noteTagsCollection().doc(String(tagId)).delete().catch(() => {});
 }
 
-/*
- Settings/preferences push is throttled the same way group edits are -
- these two localStorage-backed values (see 12-notes.js) can change on
- nearly every click while managing tags, so this keeps them to at most one
- Firestore write per interval rather than one per click.
-*/
+/**
+  Throttled push of the Notes-page settings (collapsed tag sections, last-used tags) to the user's root
+  doc, since these can change on nearly every click while managing tags.
+ */
 function pushNoteSettingsToCloud() {
   if (!currentUser) return;
   throttledCloudPush("settings", async () => {
@@ -486,6 +459,7 @@ function pushNoteSettingsToCloud() {
 
 async function deleteBookFromCloud(bookId) {
   if (!currentUser) return;
+  // File chunks live in a subcollection, so they need explicit deletion before the parent doc.
   const chunkCollection = booksCollection()
     .doc(String(bookId))
     .collection("fileChunks");
@@ -510,6 +484,11 @@ async function deleteGroupFromCloud(groupId) {
 // -----------------------------------------------------------------
 // PULL: cloud -> local (one-time catch-up run right after sign-in / reload)
 // -----------------------------------------------------------------
+/**
+  One-time catch-up sync run after sign-in or a fresh page load: reconciles books, groups, notes, note
+  tags, and settings against the cloud copy field-by-field using lastModified, pulling anything newer
+  from the cloud and pushing anything newer (or missing) locally.
+ */
 async function pullInitialSyncFromCloud() {
   if (!currentUser || initialSyncInProgress) return;
   initialSyncInProgress = true;
@@ -529,29 +508,19 @@ async function pullInitialSyncFromCloud() {
     );
 
     /*
-     Read groups/books straight from IndexedDB rather than trusting
-     loadedGroupsMemory/loadedBooksMemory - those in-memory caches are
-     only as fresh as the last fetchLocalLibrary() call, and this function
-     can genuinely run before that first call completes (right after
-     sign-in on a fresh page load). Reading the caches directly here was
-     already a latent risk of treating real local data as if it didn't
-     exist yet - same class of bug documented and fixed for Soft Sync's
-     comparisons in 16-soft-sync.js.
+     Read groups/books straight from IndexedDB rather than trusting loadedGroupsMemory/loadedBooksMemory -
+     those in-memory caches are only as fresh as the last fetchLocalLibrary() call, and this function can
+     run before that first call completes (right after sign-in on a fresh page load).
     */
     const localGroupsNow = await getAllFromLocalStore(STORE_GROUPS);
     const localBooksNow = await getAllFromLocalStore(STORE_BOOKS);
 
     /*
-     Groups previously had no conflict resolution - every remote doc was
-     written straight in unconditionally, so a recent local rename/recolor
-     could be clobbered by a stale cloud copy. Now uses the same three-way
-     lastModified comparison as books below: download remote-only groups
-     as-is, apply remote only if newer, otherwise push local up (also
-     covers "neither side ever pushed, both read 0" - favors the local
-     device rather than leaving it ambiguous). A group with no
-     lastModified at all (pre-fix, never edited since) is treated as
-     never-pushed rather than "definitely newer", so it can't wrongly
-     overwrite a genuinely newer cloud copy.
+     Three-way lastModified comparison, same as books below: download remote-only groups as-is, apply
+     remote only if newer, otherwise push local up (also covers "neither side ever pushed, both read 0" -
+     favors the local device rather than leaving it ambiguous). A group with no lastModified at all is
+     treated as never-pushed rather than "definitely newer", so it can't wrongly overwrite a genuinely
+     newer cloud copy.
     */
     await new Promise((resolve) => {
       const tx = db.transaction([STORE_GROUPS], "readwrite");
@@ -607,17 +576,10 @@ async function pullInitialSyncFromCloud() {
     }
 
     /*
-     Notes/tags previously had a "cloud always wins" bug: local records
-     had no lastModified at all, so `local(0)` always lost to a real
-     remote timestamp regardless of which side was actually newer - a
-     recent local edit (or one whose push failed) got silently discarded
-     on every sign-in/reload. Fixed: 12-notes.js now stamps lastModified
-     on every local write (and pushNoteToCloud()/pushNoteTagToCloud()
-     mirror it back locally after a push); the remote-wins comparison
-     uses strict `>` so a genuine 0-0 tie pushes local up instead
-     (mirroring the groups fix above) rather than being overwritten by
-     luck; and the remote-wins write now actually includes lastModified
-     locally instead of omitting it.
+     Local writes stamp lastModified on every create/edit, and pushNoteToCloud()/pushNoteTagToCloud()
+     mirror it back locally after a push, so this comparison can tell which side is genuinely newer.
+     The remote-wins comparison uses strict `>` so a 0-0 tie pushes local up instead, mirroring the
+     groups comparison above.
     */
     const localNotes = await getAllFromLocalStore(STORE_NOTES);
     const localNoteTags = await getAllFromLocalStore(STORE_NOTE_GROUPS);
@@ -730,6 +692,7 @@ async function pullInitialSyncFromCloud() {
   }
 }
 
+/** Overwrites a local book record's syncable fields with a newer remote copy. */
 function applyRemoteBookUpdate(bookId, remote) {
   return new Promise((resolve) => {
     const tx = db.transaction([STORE_BOOKS], "readwrite");
@@ -746,10 +709,8 @@ function applyRemoteBookUpdate(bookId, remote) {
         rec.lastModified = remote.lastModified;
         rec.timeSpentSeconds = remote.timeSpentSeconds ?? rec.timeSpentSeconds;
         /*
-         Cached EPUB analysis and reading-history fields only overwrite the
-         local copy if the remote doc actually has them set. Without the ??
-         fallback, a book synced from a device that hasn't picked up this
-         feature yet (or a remote doc written before these fields existed)
+         Cached EPUB analysis and reading-history fields only overwrite the local copy if the remote doc
+         actually has them set. Without the ?? fallback, a remote doc written before these fields existed
          would null out data this device already computed locally.
         */
         rec.totalPages = remote.totalPages ?? rec.totalPages;
@@ -759,12 +720,7 @@ function applyRemoteBookUpdate(bookId, remote) {
         rec.lastOpened = remote.lastOpened ?? rec.lastOpened;
         rec.completedDate = remote.completedDate ?? rec.completedDate;
         rec.totalSessions = remote.totalSessions ?? rec.totalSessions;
-        /*
-         Same ?? fallback treatment as the other reading-history fields
-         above: a remote doc written before this feature existed simply
-         won't have readingSessions, so keep whatever this device already
-         has locally instead of wiping it out.
-        */
+        // Same ?? fallback treatment as the other reading-history fields above.
         rec.readingSessions = remote.readingSessions ?? rec.readingSessions;
         rec.readingHistory = remote.readingHistory ?? rec.readingHistory;
         store.put(rec);
@@ -774,6 +730,7 @@ function applyRemoteBookUpdate(bookId, remote) {
   });
 }
 
+/** Downloads a book's EPUB chunks from Firestore and writes the full record into local IndexedDB. */
 async function downloadBookFromCloud(bookId, remoteMeta) {
   try {
     if (!remoteMeta.chunkCount) return;
@@ -807,8 +764,7 @@ async function downloadBookFromCloud(bookId, remoteMeta) {
         groupId: remoteMeta.groupId,
         lastModified: remoteMeta.lastModified,
         timeSpentSeconds: remoteMeta.timeSpentSeconds ?? 0,
-        // Cached EPUB analysis, if the remote doc has it - ensureBookMetadataCached()
-        // will backfill it locally later if not (e.g. an older remote doc).
+        // Cached EPUB analysis, if the remote doc has it - backfilled locally later if not.
         totalPages: remoteMeta.totalPages ?? null,
         totalWords: remoteMeta.totalWords ?? null,
         chapterCount: remoteMeta.chapterCount ?? null,
@@ -829,15 +785,14 @@ async function downloadBookFromCloud(bookId, remoteMeta) {
 /*
  -----------------------------------------------------------------
  LIVE LISTENERS — DEFINED BUT NOT USED
- Kept here in case real-time cross-device sync is wanted again later, but
- these are not called anywhere in the current flow. The problem with
- real-time listeners is that every confirmed write triggers a matching
- read via the listener attached to that same collection, which reproduces
- exactly the "reads/writes climbing just because the tab is open" behavior
- this module is designed to avoid. As long as these stay unattached, sync
- only happens during the explicit sign-in/reload catch-up pass above.
+ Kept here in case real-time cross-device sync is wanted again later, but not called anywhere in the
+ current flow. Every confirmed write would trigger a matching read via the listener on that same
+ collection, reproducing exactly the "reads/writes climbing just because the tab is open" behavior this
+ module is designed to avoid. As long as these stay unattached, sync only happens during the explicit
+ sign-in/reload catch-up pass above.
  -----------------------------------------------------------------
 */
+/** Attaches live Firestore listeners for books and groups, applying remote changes as they arrive. */
 function attachRemoteListeners() {
   if (booksListenerUnsub || groupsListenerUnsub) {
     detachRemoteListeners();

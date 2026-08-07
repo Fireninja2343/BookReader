@@ -1,36 +1,42 @@
 /*
- SOFT PULL / SOFT PUSH MODULE
- Review-before-you-commit counterparts to Hard Pull/Push (19-danger-zone.js).
- 1. Diff local vs. cloud for every synced type, without writing anything,
-    into a flat list of operations (addition/update/removal).
- 2. Show them in a modal, grouped by category, with per-row status.
- 3. Let the user apply a subset via the same push/pull/delete primitives
-    Hard Pull/Push and normal sync use.
- 4. Support pause/cancel between operations (cooperative).
+SOFT PULL / SOFT PUSH MODULE
 
- New data types just need one entry in SYNC_TYPE_REGISTRY below.
+Review-before-you-commit counterparts to Hard Pull/Push (19-danger-zone.js).
+1. Diff local vs. cloud for every synced type, without writing anything, into a flat list of
+   operations (addition/update/removal).
+2. Show them in a modal, grouped by category, with per-row status.
+3. Let the user apply a subset via the same push/pull/delete primitives Hard Pull/Push and normal
+   sync use.
+4. Support pause/cancel between operations (cooperative).
+
+New data types just need one entry in SYNC_TYPE_REGISTRY below.
 */
 
 /*
- SYNC TYPE REGISTRY - each entry describes one synced data type
- end-to-end (read local/remote, diff, apply).
-
- Shared fetchRemote() shape: read every doc in a Firestore collection,
- tag each with its numeric id.
+SYNC TYPE REGISTRY - each entry describes one synced data type end-to-end (read local/remote, diff,
+apply).
 */
+
+/**
+ Shared fetchRemote() shape: reads every doc in a Firestore collection, tagging each with its numeric id.
+ @param {function(): Object} collectionFn - Returns the Firestore collection to read.
+ @returns {Promise<Array<Object>>} Every document in the collection, each with a numeric `id`.
+ */
 async function fetchRemoteCollection(collectionFn) {
   const snap = await collectionFn().get();
   return snap.docs.map((d) => ({ id: Number(d.id), ...d.data() }));
 }
 
-/*
- DEEP VALUE EQUALITY. Old code JSON.stringify()'d arrays/objects before
- comparing, but Firestore doesn't guarantee map key order survives a
- write/read round trip, so identical data could come back reordered and
- get flagged as a false "update". Compare structurally instead: object
- keys are looked up by name (order-independent), only array element
- order matters.
-*/
+/**
+ Deep value equality. Old code JSON.stringify()'d arrays/objects before comparing, but Firestore doesn't
+ guarantee map key order survives a write/read round trip, so identical data could come back reordered and
+ get flagged as a false "update". Compares structurally instead: object keys are looked up by name
+ (order-independent), only array element order matters.
+
+ @param {*} a - First value to compare.
+ @param {*} b - Second value to compare.
+ @returns {boolean} True if the values are structurally equal.
+ */
 function deepValuesEqual(a, b) {
   if (a === b) return true;
   if (a === null || a === undefined || b === null || b === undefined) {
@@ -54,10 +60,15 @@ function deepValuesEqual(a, b) {
   return false;
 }
 
-// Every field that differs between two fieldsToCompare() outputs, via
-// deepValuesEqual(). Empty result = equal; non-empty = diff UI rows.
-// fieldMeta is the optional per-field { group, label, format } (see
-// "Entry shape" below); missing keys get sensible defaults.
+/**
+ Every field that differs between two fieldsToCompare() outputs, via deepValuesEqual().
+
+ @param {Object} localFields - The local record's fieldsToCompare() output.
+ @param {Object} remoteFields - The remote record's fieldsToCompare() output.
+ @param {Object} [fieldMeta] - Optional per-field { group, label, format } (see "Entry shape" below); missing
+ keys get sensible defaults.
+ @returns {Array<Object>} Empty if the records are equal, otherwise one diff row per differing field.
+ */
 function computeFieldDiffs(localFields, remoteFields, fieldMeta = {}) {
   const keys = new Set([...Object.keys(localFields), ...Object.keys(remoteFields)]);
   const diffs = [];
@@ -82,8 +93,15 @@ function computeFieldDiffs(localFields, remoteFields, fieldMeta = {}) {
   return diffs;
 }
 
-// One-sided version for additions/removals (only one side has data), so
-// they're still expandable like an update panel, just one column filled.
+/**
+ One-sided version for additions/removals (only one side has data), so they're still expandable like an
+ update panel, just one column filled.
+
+ @param {Object} fields - The record's fieldsToCompare() output.
+ @param {Object} [fieldMeta] - Optional per-field { group, label, format }.
+ @param {string} side - Which side the data belongs to: "local" or "remote".
+ @returns {Array<Object>} One row per field, with only that side's value/display filled in.
+ */
 function buildOneSidedFieldSnapshot(fields, fieldMeta = {}, side) {
   const rows = [];
   for (const key of Object.keys(fields)) {
@@ -104,7 +122,11 @@ function buildOneSidedFieldSnapshot(fields, fieldMeta = {}, side) {
   return rows;
 }
 
-// camelCase -> "Camel Case" fallback label when fieldMeta omits one.
+/**
+ camelCase -> "Camel Case" fallback label when fieldMeta omits one.
+ @param {string} key - The field key.
+ @returns {string} The humanized label.
+ */
 function defaultFieldLabel(key) {
   return key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -136,7 +158,11 @@ function formatDiffDuration(seconds) {
   return [h ? `${h}h` : null, m ? `${m}m` : null, `${sec}s`].filter(Boolean).join(" ");
 }
 
-// Log arrays (readingSessions/readingHistory) show as a count, not raw JSON.
+/**
+ Log arrays (readingSessions/readingHistory) show as a count, not raw JSON.
+ @param {string} noun - Singular noun for one item (e.g. "session").
+ @returns {function(*): string} A formatter that turns an array (or non-array) into a "N noun(s)" string.
+ */
 function formatDiffLogArray(noun) {
   return (value) => {
     const arr = Array.isArray(value) ? value : [];
@@ -144,24 +170,30 @@ function formatDiffLogArray(noun) {
   };
 }
 
-// Long strings (covers, note text) truncated for display.
+/**
+ Long strings (covers, note text) truncated for display.
+ @param {*} str - The value to truncate; non-strings are returned unchanged.
+ @param {number} [max=120] - Maximum length before truncating.
+ @returns {*} The truncated string (with a trailing "…"), or `str` unchanged if it isn't a string or is short
+ enough.
+ */
 function truncateForDiff(str, max = 120) {
   if (typeof str !== "string") return str;
   return str.length > max ? str.slice(0, max) + "…" : str;
 }
 
 /*
- Entry shape:
-   key/label/icon       - id, display name, group-header emoji
-   fetchLocal()         -> local records (each needs `id`); reads IndexedDB
-                          directly, not an in-memory cache
-   fetchRemote()        -> remote records (each needs `id`)
-   describe(rec)        -> short human label
-   fieldsToCompare(rec) -> fields that matter for equality, as real
-                          values (not pre-serialized)
-   fieldMeta            -> optional { [key]: { group, label, format } }
-   applyAddition/applyUpdate/applyRemoval -> Promise-returning appliers
- Soft Pull and Soft Push share this registry; only direction differs.
+Entry shape:
+  key/label/icon       - id, display name, group-header emoji
+  fetchLocal()         -> local records (each needs `id`); reads IndexedDB
+                         directly, not an in-memory cache
+  fetchRemote()        -> remote records (each needs `id`)
+  describe(rec)        -> short human label
+  fieldsToCompare(rec) -> fields that matter for equality, as real
+                         values (not pre-serialized)
+  fieldMeta            -> optional { [key]: { group, label, format } }
+  applyAddition/applyUpdate/applyRemoval -> Promise-returning appliers
+Soft Pull and Soft Push share this registry; only direction differs.
 */
 const SYNC_TYPE_REGISTRY = [
   {
@@ -190,9 +222,8 @@ const SYNC_TYPE_REGISTRY = [
       totalSessions: rec.totalSessions ?? 0,
       readingSessions: rec.readingSessions ?? [],
       readingHistory: rec.readingHistory ?? [],
-      // chunkCount is only set once pushBookFileToCloud() fully finishes,
-      // so this catches an interrupted EPUB upload that metadata alone
-      // would miss.
+      // chunkCount is only set once pushBookFileToCloud() fully finishes, so this catches an
+      // interrupted EPUB upload that metadata alone would miss.
       hasUsableFile: rec.fileData !== undefined ? !!rec.fileData : !!rec.chunkCount,
     }),
     fieldMeta: {
@@ -218,8 +249,8 @@ const SYNC_TYPE_REGISTRY = [
     },
     applyAddition: async (record, direction) => {
       if (direction === "pull") {
-        // downloadBookFromCloud() swallows its own errors, so verify by
-        // checking the local store rather than trusting the promise.
+        // downloadBookFromCloud() swallows its own errors, so verify by checking the local store
+        // rather than trusting the promise.
         await downloadBookFromCloud(record.id, record);
         const wasWritten = await new Promise((resolve, reject) => {
           const tx = db.transaction([STORE_BOOKS], "readonly");
@@ -240,8 +271,8 @@ const SYNC_TYPE_REGISTRY = [
         await applyRemoteBookUpdate(localRec.id, remoteRec);
       } else {
         await pushBookMetadataToCloud(localRec);
-        // Re-upload the file only if chunkCount looks incomplete, so a
-        // plain rename doesn't re-push the whole EPUB.
+        // Re-upload the file only if chunkCount looks incomplete, so a plain rename doesn't re-push
+        // the whole EPUB.
         if (!remoteRec.chunkCount && localRec.fileData) {
           await pushBookFileToCloud(localRec);
         }
@@ -376,13 +407,11 @@ const SYNC_TYPE_REGISTRY = [
     key: "settings",
     label: "Settings / Preferences",
     icon: "⚙️",
-    // Singleton bundle (id "settings"), not a keyed collection - treated
-    // as one row rather than diffed field-by-field.
+    // Singleton bundle (id "settings"), not a keyed collection - treated as one row rather than diffed field-by-field.
     fetchLocal: () => {
       const rawCollapsed = localStorage.getItem(Config.Db.COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY);
       const rawLastUsed = localStorage.getItem(Config.Db.LAST_NOTE_TAGS_STORAGE_KEY);
-      // No keys written yet = no record to compare (not an empty one),
-      // else a fresh device would show a spurious removal.
+      // No keys written yet = no record to compare (not an empty one), else a fresh device would show a spurious removal.
       if (rawCollapsed === null && rawLastUsed === null) return [];
       return [
         {
@@ -432,8 +461,8 @@ const SYNC_TYPE_REGISTRY = [
         await pushNoteSettingsToCloudForced();
       }
     },
-    // Never meaningfully deleted; only reached when one side hasn't
-    // synced yet, so no-op (the paired Addition brings sides in line).
+    // Never meaningfully deleted; only reached when one side hasn't synced yet, so no-op (the paired
+    // Addition brings sides in line).
     applyRemoval: async () => {},
   },
 ];
@@ -457,7 +486,11 @@ function deleteLocalRecord(storeName, id) {
   });
 }
 
-// Own helper (not the generic one) so it also clears in-memory selection state.
+/**
+ Own helper (not the generic one) so it also clears in-memory selection state.
+ @param {number} id - The book id to delete.
+ @returns {Promise<void>}
+ */
 function deleteBookLocallyOnly(id) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([STORE_BOOKS], "readwrite");
@@ -467,7 +500,11 @@ function deleteBookLocallyOnly(id) {
   });
 }
 
-// Matches the normalization pullInitialSyncFromCloud() does in 11-firebase-sync.js.
+/**
+ Matches the normalization pullInitialSyncFromCloud() does in 11-firebase-sync.js.
+ @param {Object} remote - The raw remote note record.
+ @returns {Object} The normalized local note shape.
+ */
 function normalizeRemoteNote(remote) {
   return {
     id: remote.id,
@@ -480,13 +517,15 @@ function normalizeRemoteNote(remote) {
   };
 }
 
-// COMPARISON ENGINE - pure (read-only), produces a flat operations list.
-/*
- One operation: { opId, typeKey, typeLabel, typeIcon, category,
- label, status, errorMessage, run }.
- direction: "pull" (cloud -> local) or "push" (local -> cloud) - decides
- which side is source for additions/updates and which removals delete from.
-*/
+/**
+ Comparison engine - pure (read-only), produces a flat operations list.
+
+ @param {string} direction - "pull" (cloud -> local) or "push" (local -> cloud) - decides which side is
+ source for additions/updates and which side removals delete from.
+ @returns {Promise<Array<{opId: string, typeKey: string, typeLabel: string, typeIcon: string, category: string,
+ label: string, status: string, errorMessage: string|null, fieldDiffs: Array<Object>, run: function(): Promise}>>}
+ One operation per local/remote difference found.
+ */
 async function buildSyncPlan(direction) {
   const operations = [];
 
@@ -562,8 +601,8 @@ async function buildSyncPlan(direction) {
 // MODAL STATE + LIFECYCLE
 let softSyncState = null;
 /*
- { direction: "pull"|"push", operations, runState: "idle"|"running"|"paused",
-   cancelRequested, pauseRequested, activeFilter, expandedOpIds: Set }
+{ direction: "pull"|"push", operations, runState: "idle"|"running"|"paused", cancelRequested,
+  pauseRequested, activeFilter, expandedOpIds: Set }
 */
 
 function promptSoftPull() {
@@ -639,14 +678,14 @@ function setSoftSyncZoneButtonsDisabled(isDisabled) {
   });
 }
 
-// APPLY QUEUE RUNNER
-// filterCategory: null (all) or one category. Only touches
-// pending/error ops, so completed rows are never re-applied.
+/**
+ Apply queue runner. Only touches pending/error ops, so completed rows are never re-applied.
+ @param {string|null} filterCategory - null (all) or one category to run.
+ */
 async function runSoftSyncQueue(filterCategory) {
   if (!softSyncState || softSyncState.runState === "running") return;
 
-  // Snapshot reference: softSyncState may be nulled by closeSoftSyncModal()
-  // mid-run; compare against this to detect that and stop cleanly.
+  // Snapshot reference: softSyncState may be nulled by closeSoftSyncModal() mid-run; compare against this to detect that and stop cleanly.
   const runState = softSyncState;
 
   runState.runState = "running";
@@ -705,8 +744,8 @@ function pauseSoftSyncQueue() {
 }
 
 function resumeSoftSyncQueue() {
-  // Guard on pauseRequested, not runState, since runState only flips to
-  // "paused" on the loop's next poll tick.
+  // Guard on pauseRequested, not runState,
+  // since runState only flips to "paused" on the loop's next poll tick.
   if (!softSyncState || !softSyncState.pauseRequested) return;
   softSyncState.pauseRequested = false;
   softSyncState.runState = "running";
@@ -803,7 +842,11 @@ function renderSoftSyncOperationList() {
   container.innerHTML = sections.join("");
 }
 
-// Every row with a diff is expandable; clicking toggles the field panel.
+/**
+ Every row with a diff is expandable; clicking toggles the field panel.
+ @param {Object} op - One sync operation, as built by buildSyncPlan().
+ @returns {string} The row HTML.
+ */
 function renderOperationRowHtml(op) {
   const cat = categoryMeta(op.category);
   const st = statusMeta(op.status);
@@ -829,7 +872,10 @@ function renderOperationRowHtml(op) {
   `;
 }
 
-// Re-renders just this row so expanding one diff doesn't scroll-jump the list.
+/**
+ Re-renders just this row so expanding one diff doesn't scroll-jump the list.
+ @param {string} opId - The operation's opId.
+ */
 function toggleSoftSyncOpDetails(opId) {
   if (!softSyncState) return;
   if (softSyncState.expandedOpIds.has(opId)) {
@@ -845,8 +891,13 @@ function directionColumnLabels(direction) {
   return direction === "pull" ? ["Cloud", "Local"] : ["Local", "Cloud"];
 }
 
-// Expandable field-by-field diff panel. fieldDiffs is pre-sorted
-// group-then-key, so a new heading is emitted exactly when group changes.
+/**
+ Expandable field-by-field diff panel. fieldDiffs is pre-sorted group-then-key, so a new heading is emitted
+ exactly when group changes.
+
+ @param {Object} op - One sync operation, as built by buildSyncPlan().
+ @returns {string} The detail panel HTML, or "" if the operation has no field diffs.
+ */
 function renderOpDetailPanelHtml(op) {
   if (!op.fieldDiffs || op.fieldDiffs.length === 0) return "";
   const direction = softSyncState ? softSyncState.direction : "push";
@@ -893,7 +944,11 @@ function renderSoftSyncOperationRow(op) {
   rowEl.outerHTML = renderOperationRowHtml(op);
 }
 
-// Escapes characters unsafe in a raw CSS id selector.
+/**
+ Escapes characters unsafe in a raw CSS id selector.
+ @param {*} id - The id to escape.
+ @returns {string} The escaped id, safe to use in a CSS id selector.
+ */
 function cssEscapeId(id) {
   return String(id).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
@@ -910,8 +965,7 @@ function renderSoftSyncControls() {
 
   if (!softSyncState) return;
 
-  // pauseRequested (not just runState) drives isPaused so Pause feels
-  // instant instead of waiting for the loop's next ~200ms tick.
+  // pauseRequested (not just runState) drives isPaused so Pause feels instant instead of waiting for the loop's next ~200ms tick.
   const isPaused = softSyncState.runState === "paused" || (softSyncState.runState === "running" && softSyncState.pauseRequested);
   const isRunning = softSyncState.runState === "running" && !softSyncState.pauseRequested;
   const isBusy = isRunning || isPaused;

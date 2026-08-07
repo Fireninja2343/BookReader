@@ -1,44 +1,36 @@
 /*
  DANGER ZONE / SYNC RECOVERY MODULE
- Three destructive, deliberately-hard-to-trigger operations, all built on
- the same reusable typed-confirmation modal:
+ Three destructive, deliberately-hard-to-trigger operations, all built on the same reusable
+ typed-confirmation modal:
 
-   1. clearLocalData()   - wipes every local store + localStorage app keys,
-      leaves the cloud untouched, then hard-reloads into a clean state
-      (reusing hardReloadApp()'s cache-clearing from 01-state.js).
-   2. hardPullFromCloud() - discards local data and rebuilds it entirely
-      from whatever is currently in Firestore.
-   3. hardPushToCloud()   - overwrites the cloud with a full mirror of the
-      current local database; local data left untouched.
+   1. clearLocalData()   - wipes every local store + localStorage app keys, leaves the cloud untouched,
+      then hard-reloads into a clean state.
+   2. hardPullFromCloud() - discards local data and rebuilds it entirely from whatever is currently
+      in Firestore.
+   3. hardPushToCloud()   - overwrites the cloud with a full mirror of the current local database;
+      local data left untouched.
 
- Both sync operations build on the existing per-store push/pull
- primitives in 11-firebase-sync.js/02-db.js, so they stay consistent with
- the rest of the sync architecture rather than introducing a second
- parallel writer.
+ Both sync operations build on the existing per-store push/pull primitives, so they stay consistent
+ with the rest of the sync architecture rather than introducing a second parallel writer.
 
  DESIGN FOR "hard to accidentally trigger":
-  - Each action requires typing an exact confirmation phrase before its
-    button enables (see openDangerConfirmModal() below).
-  - Pull and Push use different accent colors and phrases so they can't
-    be mixed up.
-  - All three buttons live behind Settings > Danger Zone, disable for the
-    duration of their own operation, and show inline success/error status.
+  - Each action requires typing an exact confirmation phrase before its button enables.
+  - Pull and Push use different accent colors and phrases so they can't be mixed up.
+  - All three buttons live behind Settings > Danger Zone, disable for the duration of their own
+    operation, and show inline success/error status.
 */
 
 // -----------------------------------------------------------------
 // REUSABLE LOCAL-DATA-WIPE PRIMITIVE
-// Used by both Clear Local Data and (as the first step of) Hard Pull, so
-// there is exactly one code path that actually empties the local
-// database - any future reset-style feature should call this too rather
-// than re-implementing a wipe.
+// Used by both Clear Local Data and (as the first step of) Hard Pull, so there is exactly one code
+// path that actually empties the local database - any future reset-style feature should call this
+// too rather than re-implementing a wipe.
 // -----------------------------------------------------------------
-/*
- Wipes every object store currently defined in the local IndexedDB
- (STORE_BOOKS, STORE_GROUPS, STORE_NOTES, STORE_NOTE_GROUPS) plus the
- handful of localStorage keys this app writes to. Deliberately iterates
- db.objectStoreNames rather than a hardcoded list, so a future store added
- to initIndexedDB() is automatically included here with no matching edit
- required in this file.
+/**
+ Wipes every object store currently defined in the local IndexedDB (STORE_BOOKS, STORE_GROUPS,
+ STORE_NOTES, STORE_NOTE_GROUPS) plus the handful of localStorage keys this app writes to.
+ Deliberately iterates db.objectStoreNames rather than a hardcoded list, so a future store added to
+ initIndexedDB() is automatically included here with no matching edit required in this file.
 */
 function wipeAllLocalAppData() {
   return new Promise((resolve, reject) => {
@@ -61,10 +53,9 @@ function wipeAllLocalAppData() {
   });
 }
 
-/*
- Every localStorage key this app owns, cleared explicitly (rather than
- localStorage.clear()) so this can't ever reach into unrelated keys some
- other site/tool on the same origin might have set.
+/**
+ Removes every localStorage key this app owns, cleared explicitly (rather than localStorage.clear())
+ so this can't ever reach into unrelated keys some other site/tool on the same origin might have set.
 */
 function clearAppLocalStorageKeys() {
   const keys = [
@@ -79,22 +70,16 @@ function clearAppLocalStorageKeys() {
 
 // -----------------------------------------------------------------
 // REUSABLE TYPED-CONFIRMATION MODAL
-// Generic enough to back any future destructive action, not just the
-// three below - callers pass in the copy, theme, required phrase, and an
-// async function to run once confirmed.
+// Generic enough to back any future destructive action, not just the three below - callers pass in
+// the copy, theme, required phrase, and an async function to run once confirmed.
 // -----------------------------------------------------------------
 let dangerConfirmActiveConfig = null;
 
-/*
- config = {
-   theme: "clear" | "pull" | "push",   // drives the modal's accent color
-   title: string,
-   bodyHtml: string,                   // explains what gets overwritten
-   confirmPhrase: string,              // must be typed verbatim to enable the button
-   confirmLabel: string,               // button text once enabled
-   onConfirm: async () => void,        // the actual operation
- }
-*/
+/**
+ Opens a typed-confirmation modal for destructive actions and sets up input validation.
+
+ @param {Object} config
+ */
 function openDangerConfirmModal(config) {
   dangerConfirmActiveConfig = config;
 
@@ -121,6 +106,7 @@ function openDangerConfirmModal(config) {
   setTimeout(() => input.focus(), 0);
 }
 
+/** Enables the confirm button only once the input matches the active config's exact confirm phrase. */
 function handleDangerConfirmInput() {
   const input = document.getElementById("danger-confirm-input");
   const confirmBtn = document.getElementById("danger-confirm-btn");
@@ -128,15 +114,17 @@ function handleDangerConfirmInput() {
   confirmBtn.disabled = input.value !== dangerConfirmActiveConfig.confirmPhrase;
 }
 
+/** Closes the confirmation modal, refusing to do so while an operation is mid-flight. */
 function closeDangerConfirmModal() {
   const modal = document.getElementById("danger-confirm-modal");
-  // Don't allow closing mid-operation - the buttons are disabled and the
-  // status line says so, but this blocks the Escape key / backdrop click too.
+  // Don't allow closing mid-operation - the buttons are disabled and the status line says so, but
+  // this blocks the Escape key / backdrop click too.
   if (modal.dataset.busy === "true") return;
   modal.close();
   dangerConfirmActiveConfig = null;
 }
 
+/** Runs the active config's onConfirm, locking the modal and buttons for the duration. */
 async function submitDangerConfirmModal() {
   if (!dangerConfirmActiveConfig) return;
   const modal = document.getElementById("danger-confirm-modal");
@@ -158,10 +146,9 @@ async function submitDangerConfirmModal() {
     await dangerConfirmActiveConfig.onConfirm();
     statusEl.className = "danger-confirm-status danger-confirm-status-success";
     statusEl.textContent = "Done.";
-    // The two sync operations and the clear operation each handle their
-    // own follow-up (reload or a final status message) inside onConfirm,
-    // so this modal is left to close itself shortly after rather than
-    // needing per-action cleanup here.
+    // The two sync operations and the clear operation each handle their own follow-up (reload or a
+    // final status message) inside onConfirm, so this modal is left to close itself shortly after
+    // rather than needing per-action cleanup here.
     setTimeout(() => {
       modal.dataset.busy = "false";
       modal.close();
@@ -176,11 +163,12 @@ async function submitDangerConfirmModal() {
     statusEl.className = "danger-confirm-status danger-confirm-status-error";
     statusEl.textContent = "Failed: " + (err && err.message ? err.message : String(err));
     setDangerZoneButtonsDisabled(false);
-    // Leave confirmBtn disabled until they re-type the phrase, consistent
-    // with the normal input-driven enable/disable behavior above.
+    // Leave confirmBtn disabled until they re-type the phrase, consistent with the normal
+    // input-driven enable/disable behavior above.
   }
 }
 
+/** Enables or disables all three Danger Zone action buttons at once. */
 function setDangerZoneButtonsDisabled(isDisabled) {
   ["btn-clear-local-data", "btn-hard-pull", "btn-hard-push"].forEach((id) => {
     const el = document.getElementById(id);
@@ -191,6 +179,7 @@ function setDangerZoneButtonsDisabled(isDisabled) {
 // -----------------------------------------------------------------
 // 1. CLEAR LOCAL DATA
 // -----------------------------------------------------------------
+/** Opens the confirmation modal for wiping all local app data. */
 function promptClearLocalData() {
   openDangerConfirmModal({
     theme: "clear",
@@ -206,9 +195,8 @@ function promptClearLocalData() {
     confirmLabel: "Clear Local Data",
     onConfirm: async () => {
       await wipeAllLocalAppData();
-      // Reuses hardReloadApp()'s Service Worker / Cache Storage clearing +
-      // cache-busting reload (01-state.js), so the reload after a data wipe
-      // also can't be served a stale cached shell.
+      // Reuses hardReloadApp()'s Service Worker / Cache Storage clearing + cache-busting reload, so
+      // the reload after a data wipe also can't be served a stale cached shell.
       await hardReloadApp();
     },
   });
@@ -217,6 +205,7 @@ function promptClearLocalData() {
 // -----------------------------------------------------------------
 // 2. HARD PULL (cloud -> local, discarding local)
 // -----------------------------------------------------------------
+/** Opens the confirmation modal for rebuilding local data from the cloud, requiring a signed-in user. */
 function promptHardPull() {
   if (!currentUser) {
     alert("Sign in to Sync first — Hard Pull needs a cloud account to pull from.");
@@ -239,19 +228,16 @@ function promptHardPull() {
   });
 }
 
-/*
- Discards all local data and rebuilds it from Firestore. Every synced
- data type is pulled explicitly below - see the checklist in this
- function's inline comments - so a future data type that gets added to
- the sync layer needs a one-line addition here too, rather than silently
- being left out of recovery.
+/**
+ Discards all local data and rebuilds it from Firestore. Every synced data type is pulled explicitly
+ below - see the checklist in this function's inline comments - so a future data type added to the
+ sync layer needs a one-line addition here too, rather than silently being left out of recovery.
 */
 async function hardPullFromCloud() {
   if (!currentUser) throw new Error("Not signed in.");
 
-  // Fetch everything from the cloud FIRST, before touching local data, so
-  // a network failure here leaves local data completely untouched instead
-  // of wiping it out and then failing to repopulate it.
+  // Fetch everything from the cloud FIRST, before touching local data, so a network failure here
+  // leaves local data completely untouched instead of wiping it out and then failing to repopulate it.
   const [booksSnap, groupsSnap, notesSnap, noteTagsSnap, userSnap] = await Promise.all([
     booksCollection().get(),
     groupsCollection().get(),
@@ -278,9 +264,8 @@ async function hardPullFromCloud() {
   for (const docSnap of booksSnap.docs) {
     const bookId = Number(docSnap.id);
     const remote = docSnap.data();
-    // downloadBookFromCloud() (11-firebase-sync.js) already writes the full
-    // record - progress, sessions, reading history, cached metadata, sort
-    // order, everything - and pulls/reassembles the chunked file binary.
+    // downloadBookFromCloud() already writes the full record - progress, sessions, reading history,
+    // cached metadata, sort order, everything - and pulls/reassembles the chunked file binary.
     await downloadBookFromCloud(bookId, remote);
   }
 
@@ -330,8 +315,8 @@ async function hardPullFromCloud() {
     }
   }
 
-  // Refresh every in-memory cache + on-screen view from the freshly
-  // rebuilt local database, same as what happens after a normal sign-in sync.
+  // Refresh every in-memory cache + on-screen view from the freshly rebuilt local database, same as
+  // what happens after a normal sign-in sync.
   fetchLocalLibrary();
   if (typeof fetchNotesLibrary === "function") fetchNotesLibrary();
   if (typeof collapsedNoteTagKeys !== "undefined" && typeof loadCollapsedNoteTagKeys === "function") {
@@ -342,6 +327,7 @@ async function hardPullFromCloud() {
 // -----------------------------------------------------------------
 // 3. HARD PUSH (local -> cloud, overwriting cloud)
 // -----------------------------------------------------------------
+/** Opens the confirmation modal for overwriting the cloud with local data, requiring a signed-in user. */
 function promptHardPush() {
   if (!currentUser) {
     alert("Sign in to Sync first — Hard Push needs a cloud account to push to.");
@@ -365,21 +351,18 @@ function promptHardPush() {
   });
 }
 
-/*
- Overwrites the cloud with a full mirror of local data. Reuses the
- existing per-item push functions (pushBookMetadataToCloud,
- pushBookFileToCloud, pushGroupToCloud, pushNoteToCloud,
- pushNoteTagToCloud) so the shape of what's written stays identical to
- normal incremental syncing - the only difference here is that every
- local record is pushed unconditionally, and anything present in the
- cloud but no longer present locally is deleted so the cloud becomes an
- exact mirror rather than a superset.
+/**
+ Overwrites the cloud with a full mirror of local data. Reuses the existing per-item push functions
+ (pushBookMetadataToCloud, pushBookFileToCloud, pushGroupToCloud, pushNoteToCloud, pushNoteTagToCloud)
+ so the shape of what's written stays identical to normal incremental syncing - the only difference
+ here is that every local record is pushed unconditionally, and anything present in the cloud but no
+ longer present locally is deleted so the cloud becomes an exact mirror rather than a superset.
 */
 async function hardPushToCloud() {
   if (!currentUser) throw new Error("Not signed in.");
 
-  // Read current cloud doc ids up front so we know what to delete once
-  // the fresh push is written (id sets, not full docs - keeps this cheap).
+  // Read current cloud doc ids up front so we know what to delete once the fresh push is written
+  // (id sets, not full docs - keeps this cheap).
   const [existingBooksSnap, existingGroupsSnap, existingNotesSnap, existingNoteTagsSnap] = await Promise.all([
     booksCollection().get(),
     groupsCollection().get(),
@@ -388,12 +371,9 @@ async function hardPushToCloud() {
   ]);
 
   /*
-   Reads straight from IndexedDB rather than the loadedX Memory caches,
-   which may not be populated yet this session (see the race documented
-   on pullInitialSyncFromCloud() in 11-firebase-sync.js). Trusting a
-   stale/empty cache here wouldn't just skip pushing real data - the
-   cleanup pass below would see an empty id set and delete every
-   matching cloud record.
+   Reads straight from IndexedDB rather than the loadedX Memory caches, which may not be populated
+   yet this session. Trusting a stale/empty cache here wouldn't just skip pushing real data - the
+   cleanup pass below would see an empty id set and delete every matching cloud record.
   */
   const localBooks = await getAllFromLocalStore(STORE_BOOKS);
   const localGroups = await getAllFromLocalStore(STORE_GROUPS);
@@ -447,12 +427,11 @@ async function hardPushToCloud() {
   // Local data is intentionally left untouched by this whole function.
 }
 
-/*
- pushGroupToCloud() in 11-firebase-sync.js is throttled (at most once per
- CLOUD_PROGRESS_PUSH_INTERVAL_MS per group), which is correct for normal
- editing but wrong here - Hard Push needs every group written for real,
- immediately, regardless of when it was last pushed. Bypasses the shared
- throttle map directly rather than duplicating the write logic.
+/**
+ pushGroupToCloud() is throttled (at most once per CLOUD_PROGRESS_PUSH_INTERVAL_MS per group), which
+ is correct for normal editing but wrong here - Hard Push needs every group written for real,
+ immediately, regardless of when it was last pushed. Bypasses the shared throttle map directly rather
+ than duplicating the write logic.
 */
 async function pushGroupToCloudForced(group) {
   if (!currentUser || !group || group.id == null) return;
@@ -469,10 +448,9 @@ async function pushGroupToCloudForced(group) {
     );
 }
 
-/*
- Same throttle-bypass treatment as pushGroupToCloudForced() above, for the
- settings bundle (pushNoteSettingsToCloud() in 11-firebase-sync.js is
- throttled under the "settings" key).
+/**
+ Bypasses the shared push throttle for the settings bundle, so Hard Push writes it immediately rather
+ than waiting for the interval that normally limits pushNoteSettingsToCloud() under the "settings" key.
 */
 async function pushNoteSettingsToCloudForced() {
   if (!currentUser) return;

@@ -1,56 +1,70 @@
 /*
- GITHUB VERSION BADGE
+  GITHUB VERSION BADGE
 
- Shows a small "vX.Y.N" label (X.Y set manually below, N auto-derived from
- the repo's total commit count on the deployed branch) in the bottom-right
- corner, above #sign-in. Hovering shows a native tooltip with how long ago
- the latest commit landed and its message. Clicking the badge text forces
- an immediate re-check (bypassing the cache) and shows a small popup toast
- just above the footer while it does.
-
- Also checks whether the live GitHub Pages site is actually running that
- latest commit yet (deploys can lag 20s-1min+ behind the push) - if the
- site is still on an older commit, or the deploy is in progress/failed,
- the badge shows a plain "Outdated" / "Deploying..." state instead of
- pretending everything's current.
-
- To point this at a different repo/branch later (e.g. after a branch
- switch), only Config.VersionBadge in 00-config.js needs to change.
+  Renders a "vX.Y.N" badge in the bottom-right corner (X.Y set manually, N derived from commit count).
+  Shows commit details on hover, supports manual/auto cache refreshes, and displays an "(outdated)" 
+  status if GitHub Pages deployment lags behind the latest branch commit.
 */
+
 const VERSION_BADGE_REPO_OWNER = Config.VersionBadge.REPO_OWNER;
 const VERSION_BADGE_REPO_NAME = Config.VersionBadge.REPO_NAME;
 const VERSION_BADGE_REPO_BRANCH = Config.VersionBadge.REPO_BRANCH;
-
-// The "big version" set by hand in Config.
-// Only that needs bumping for a deliberate version milestone
-// the trailing commit-count number below takes care of the rest on its own.
+/**
+  Major/minor version prefix manually set in Config.
+  @type {string}
+*/
 const VERSION_BADGE_MAJOR_MINOR = Config.VersionBadge.MAJOR_MINOR;
-
+/**
+  LocalStorage key for persisting version badge state.
+  @type {string}
+*/
 const VERSION_BADGE_CACHE_KEY = Config.VersionBadge.CACHE_KEY;
-// 15 min by default (see Config.VersionBadge.AUTO_REFRESH_MS) - about 4
-// checks/hour on its own, leaving plenty of headroom under GitHub's 60/hour
-// unauthenticated limit even with the manual button and multiple
-// tabs/devices sharing the same network.
+/**
+  Interval in milliseconds to stay under GitHub's 60 req/hr rate limit.
+  @type {number}
+*/
 const VERSION_BADGE_AUTO_REFRESH_MS = Config.VersionBadge.AUTO_REFRESH_MS;
+/**
+  Cache lifetime in milliseconds before data is considered stale.
+  @type {number}
+*/
 const VERSION_BADGE_CACHE_TTL_MS = Config.VersionBadge.CACHE_TTL_MS;
+/**
+  Minimum cooldown duration in milliseconds between user-triggered manual refreshes.
+  @type {number}
+*/
 const MANUAL_REFRESH_COOLDOWN = Config.VersionBadge.MANUAL_REFRESH_COOLDOWN;
+/**
+  Threshold in milliseconds before showing an absolute date alongside relative time.
+  @type {number}
+*/
 const TIME_BEFORE_SHOWING_DATE = Config.VersionBadge.TIME_BEFORE_SHOWING_DATE;
-
+/**
+  Interval timer reference handle for background auto-refreshes.
+  @type {number|null}
+*/
 let versionBadgeRefreshInterval = null;
+
+/**
+  Timestamp in milliseconds when the last network fetch occurred.
+  @type {number}
+*/
 let refreshedAt = 0;
 
 window.addEventListener("DOMContentLoaded", () => {
     initVersionBadge();
 });
 
+/**
+  Initializes badge click listeners, renders cached state, and starts the background refresh loop.
+*/
 function initVersionBadge() {
     const badge = document.getElementById("app-version-badge");
     if (!badge) return;
 
     badge.addEventListener("click", () => refreshVersionBadge(true));
 
-    // Show whatever's cached immediately (even if stale) so the badge
-    // isn't blank while the first real fetch is in flight.
+    // Render cache immediately to avoid empty state during initial fetch
     const cached = readVersionBadgeCache();
     if (cached) renderVersionBadge(cached);
 
@@ -62,6 +76,11 @@ function initVersionBadge() {
     }, VERSION_BADGE_AUTO_REFRESH_MS);
 }
 
+/**
+  Reads and parses stored version badge data from LocalStorage.
+
+  @returns {Object|null} Cached version object or null if unavailable/corrupt.
+*/
 function readVersionBadgeCache() {
     try {
         const raw = localStorage.getItem(VERSION_BADGE_CACHE_KEY);
@@ -71,18 +90,22 @@ function readVersionBadgeCache() {
     }
 }
 
+/**
+  Writes version badge data to LocalStorage.
+
+  @param {Object} data - Version payload object to cache.
+*/
 function writeVersionBadgeCache(data) {
     try {
         localStorage.setItem(VERSION_BADGE_CACHE_KEY, JSON.stringify(data));
-    } catch (e) {
-        // Storage full or unavailable - badge just won't persist across reloads, non-fatal
-    }
+    } catch (e) {}
 }
 
-/*
- forceRefresh=true (the manual click path) always hits the network and
- shows the toast popup. forceRefresh=false (initial load / the auto-refresh
- interval) respects the cache TTL and stays silent.
+/** 
+  Fetches updated version data, handles caching logic, and updates the UI.
+
+  @param {boolean} forceRefresh - True (manual click) bypasses cache TTL and shows toasts. False respects TTL silently.
+  @returns {Promise<void>}
 */
 async function refreshVersionBadge(forceRefresh) {
     const cached = readVersionBadgeCache();
@@ -106,10 +129,7 @@ async function refreshVersionBadge(forceRefresh) {
 
         const previousCount = cached ? cached.commitCount : null;
 
-        // "Deployed" only counts as true if the newest deployment's sha
-        // actually matches the branch's newest commit AND that deployment's
-        // last status was a success - a deployment record existing at all
-        // just means one was attempted, not that it's live or that it succeeded.
+        // Requires exact SHA match and successful deployment status
         const isDeployed = deployStatus.sha === commitInfo.sha && deployStatus.state === "success";
 
         const data = {
@@ -134,6 +154,12 @@ async function refreshVersionBadge(forceRefresh) {
     }
 }
 
+/**
+  Fetches the most recent commit metadata for the target branch from the GitHub API.
+
+  @returns {Promise<{sha: string, message: string, date: string|null}>} Latest commit SHA, message title, and ISO date.
+  @throws {Error} If GitHub API returns a non-OK status or an empty array.
+*/
 async function fetchLatestCommitInfo() {
     const url = `https://api.github.com/repos/${VERSION_BADGE_REPO_OWNER}/${VERSION_BADGE_REPO_NAME}/commits?sha=${encodeURIComponent(VERSION_BADGE_REPO_BRANCH)}&per_page=1`;
     const res = await fetch(url);
@@ -149,11 +175,11 @@ async function fetchLatestCommitInfo() {
     };
 }
 
-/*
- GitHub doesn't expose a direct "total commit count" field, so this uses
- the well-known Link-header trick: requesting 1 commit per page and reading
- the page number of the "last" rel link gives the total commit count
- without paging through the whole history.
+/**
+  Calculates total branch commit count using GitHub's Link header pagination trick (`rel="last"` page number).
+
+  @returns {Promise<number>} Total commit count on the target branch.
+  @throws {Error} If GitHub API request fails.
 */
 async function fetchCommitCount() {
     const url = `https://api.github.com/repos/${VERSION_BADGE_REPO_OWNER}/${VERSION_BADGE_REPO_NAME}/commits?sha=${encodeURIComponent(VERSION_BADGE_REPO_BRANCH)}&per_page=1`;
@@ -161,24 +187,17 @@ async function fetchCommitCount() {
     if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
 
     const linkHeader = res.headers.get("Link");
-    if (!linkHeader) {
-        // No Link header means there's only one page of results - i.e. exactly one commit
-        return 1;
-    }
+    if (!linkHeader) return 1;
 
     const lastLinkMatch = linkHeader.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/);
-    if (lastLinkMatch) return parseInt(lastLinkMatch[1], 10);
-
-    return 1;
+    return lastLinkMatch ? parseInt(lastLinkMatch[1], 10) : 1;
 }
 
-/*
- Checks whether the live GitHub Pages site is actually caught up to the
- branch's latest commit. A deployment record merely existing only means
- GitHub attempted a deploy for that sha at some point - it says nothing
- about whether that deploy actually finished successfully, so the
- newest deployment's status has to be checked too (its most recent
- status entry's "state" field, e.g. "success"/"failure"/"in_progress").
+/**
+  Checks if the live GitHub Pages site is updated and deployed on the branch's newest commit.
+
+  @returns {Promise<{sha: string|null, state: string}>} Deployment SHA and status state.
+  @throws {Error} If API requests fail.
 */
 async function fetchDeployStatus() {
     const deploymentsUrl = `https://api.github.com/repos/${VERSION_BADGE_REPO_OWNER}/${VERSION_BADGE_REPO_NAME}/deployments?environment=github-pages&per_page=1`;
@@ -195,22 +214,26 @@ async function fetchDeployStatus() {
     if (!statusesRes.ok) throw new Error(`GitHub API error: ${statusesRes.status}`);
     const statuses = await statusesRes.json();
 
-    // Statuses are returned newest-first.
     const latestState = Array.isArray(statuses) && statuses.length > 0 ? statuses[0].state : "unknown";
 
     return { sha: latestDeployment.sha, state: latestState };
 }
 
+/**
+  Renders the version text, tooltip message, and outdated state indicator in the DOM.
+
+  @param {Object} data - Version payload object.
+  @param {number} data.commitCount - Total commit count.
+  @param {string} data.message - Commit message.
+  @param {string|null} data.date - ISO date string of latest commit.
+  @param {boolean} data.isDeployed - Whether latest commit is live on GitHub Pages.
+*/
 function renderVersionBadge(data) {
     const textEl = document.getElementById("app-version-badge-text");
     const badgeEl = document.getElementById("app-version-badge");
     if (!textEl || !badgeEl) return;
 
     if (data.isDeployed === false) {
-        // Distinguish "a deploy is actively running" from "nothing has been
-        // triggered yet / it failed" isn't reliable from state alone in every
-        // case, so this keeps the message intentionally generic rather than
-        // guessing - either way, the site isn't caught up to the latest commit yet.
         textEl.innerText = `v${VERSION_BADGE_MAJOR_MINOR}.${data.commitCount} (outdated)`;
     } else {
         textEl.innerText = `v${VERSION_BADGE_MAJOR_MINOR}.${data.commitCount}`;
@@ -234,9 +257,12 @@ function renderVersionBadge(data) {
     badgeEl.title = title;
 }
 
-// Small self-contained relative-time formatter (not reused from elsewhere
-// in the codebase, since this module has no dependency on load order
-// beyond the DOM/config already present at DOMContentLoaded).
+/** 
+  Formats a historical Date object into a relative time string (e.g., "5min ago", "2d ago").
+
+  @param {Date} pastDate - The historical date to compare against current time.
+  @returns {string} Formatted relative time string.
+*/
 function formatVersionBadgeRelativeTime(pastDate) {
     const diffMs = Date.now() - pastDate.getTime();
     const diffSeconds = Math.max(0, diffMs / 1000);
@@ -259,23 +285,33 @@ function formatVersionBadgeRelativeTime(pastDate) {
     return `${roundTo(diffYears, 1)}y ago`;
 }
 
-// Rounds to a given number of decimal places. Math.round() has no
-// decimal-places argument, so this is the standard scale-round-unscale approach.
+/**
+  Rounds a numeric value to a specified number of decimal places.
+
+  @param {number} value - The numeric value to round.
+  @param {number} decimalPlaces - Target count of decimal places.
+  @returns {number} Value rounded to requested decimal places.
+*/
 function roundTo(value, decimalPlaces) {
     const scale = Math.pow(10, decimalPlaces);
     return Math.round(value * scale) / scale;
 }
 
 let versionToastHideTimeout = null;
+
+/**
+  Displays a temporary toast notification above the footer UI element.
+
+  @param {string} text - Message content to display in the toast.
+  @param {boolean} autoHide - Whether the toast auto-fades out after a timeout.
+*/
 function showVersionToast(text, autoHide) {
     const toast = document.getElementById("version-toast");
     if (!toast) return;
 
     toast.innerText = text;
     toast.classList.remove("hidden");
-    // Force a reflow so the "visible" class transition actually plays when
-    // re-triggered back-to-back (e.g. "updating..." immediately followed by "updated")
-    void toast.offsetWidth;
+    void toast.offsetWidth; // Force reflow to re-trigger CSS transition
     toast.classList.add("visible");
 
     if (versionToastHideTimeout) clearTimeout(versionToastHideTimeout);

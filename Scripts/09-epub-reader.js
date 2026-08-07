@@ -1,12 +1,14 @@
 // =================================================================
 // READER LAUNCH & CHAPTER RENDERING
 // =================================================================
+/**
+ Opens the reader view for the given book: loads its EPUB data, builds the spine/TOC,
+ renders the last-read chapter, and starts session/progress tracking. Sets the
+ activeBookObject/activeZipInstance/activeSpineArray/activeSpinePointer globals the
+ rest of the reader depends on - the required entry point for opening any book.
+ @param {object} bookObject - Book record (must include fileData) to open.
+ */
 async function launchEpubReader(bookObject) {
-/*
- Guards against launching a book while another reading session is still
- open. Normally showLibraryState() closes sessions before returning to the
- library, but this keeps launchEpubReader() safe independently of callers.
-*/
   if (typeof endReadingSession === "function") endReadingSession("newBookLaunched");
 
   activeBookObject = bookObject;
@@ -16,10 +18,9 @@ async function launchEpubReader(bookObject) {
   document.getElementById("reader-controls").style.display = "flex";
 
   /*
-   Every call to launchEpubReader() is, by definition, a new reading
-   session for this book - so firstOpened/lastOpened/totalSessions are
-   updated here rather than anywhere progress happens to be saved. See
-   recordReadingSessionStart() in 02-db.js.
+   Every call to launchEpubReader() is, by definition, a new reading session for this book
+   - so firstOpened/lastOpened/totalSessions are updated here rather than anywhere progress
+   happens to be saved. See recordReadingSessionStart() in 02-db.js.
   */
   if (typeof recordReadingSessionStart === "function") {
     recordReadingSessionStart(bookObject.id);
@@ -44,9 +45,9 @@ async function launchEpubReader(bookObject) {
 
     activeSpinePointer = bookObject.currentChapter || 0;
     /*
-    Records the current chapter as the last pushed baseline when opening a
-    book. Without this, the first progress update could look like a chapter
-    change from the previous book and trigger an unnecessary cloud push.
+    Records the current chapter as the last pushed baseline when opening a book. Without
+    this, the first progress update could look like a chapter change from the previous
+    book and trigger an unnecessary cloud push.
     */
     lastPushedChapterIndex = activeSpinePointer;
 
@@ -68,6 +69,12 @@ async function launchEpubReader(bookObject) {
   }
 }
 
+/**
+ Renders the chapter at activeSpinePointer into the reader frame, inlining images as
+ base64 data URIs. Requires activeSpineArray/activeSpinePointer to already be set (see
+ launchEpubReader()) - call this to (re)draw after changing activeSpinePointer.
+ @param {JSZip} zipInstance - Open zip for the active book (normally activeZipInstance).
+ */
 async function renderActiveChapterFromZip(zipInstance) {
   if (activeSpineArray.length === 0) return;
   const targetPath = activeSpineArray[activeSpinePointer];
@@ -118,15 +125,21 @@ async function renderActiveChapterFromZip(zipInstance) {
   }
 }
 
+/**
+ Parses the EPUB's TOC and renders it into the sidebar, and populates
+ activeChapterTitles for the progress-bar tooltips. Must run after activeSpineArray is
+ populated, since it maps TOC entries onto spine indices.
+ @param {JSZip} zip - Open zip for the active book.
+ @param {Document} opfDoc - Parsed OPF document, used to locate the TOC manifest item.
+ @param {string} baseDir - Base directory of the OPF file, for resolving the TOC's path.
+ */
 async function parseAndRenderTOC(zip, opfDoc, baseDir) {
   const tocList = document.getElementById("toc-render-list");
   tocList.innerHTML = "";
 
-  /*
-  Default chapters to "Chapter N" first. Some spine entries lack matching
-  TOC nav points, so this ensures every progress tooltip has a usable label
-  even when the EPUB's TOC does not cover that entry.
-  */
+  // Default chapters to "Chapter N" first. Some spine entries lack matching TOC nav points,
+  // so this ensures every progress tooltip has a usable label even when the EPUB's TOC does
+  // not cover that entry.
   activeChapterTitles = activeSpineArray.map((_, idx) => `Chapter ${idx + 1}`);
 
   let tocItem =

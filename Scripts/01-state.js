@@ -21,8 +21,10 @@ let currentActiveContextBookIndexId = null; // Row targeted by the 3-dots panel 
 let currentSessionStartTime = null;
 let currentSessionLastInteractionTime = null;
 let currentSessionStartChapterPointer = null;
-let currentSessionStartBookScalePct = null; // Whole-book % at session start, for in-chapter-aware pagesRead
-let lastKnownBookScalePct = 0; // Latest whole-book % from trackReadingProgress() (10-reader-controls.js)
+/**  Whole-book % at session start, for in-chapter-aware pagesRead */
+let currentSessionStartBookScalePct = null;
+/** Latest whole-book % from `trackReadingProgress()` (`10-reader-controls.js`) */
+let lastKnownBookScalePct = 0; 
 
 let loadedBooksMemory = [];
 let loadedGroupsMemory = [];
@@ -31,12 +33,16 @@ let activeBookObject = null;
 let activeZipInstance = null;
 let activeSpineArray = [];
 let activeSpinePointer = 0;
-let activeChapterTitles = []; // Parallel to activeSpineArray, filled in by parseAndRenderTOC()
-let lastPushedChapterIndex = null; // Last chapter index pushed to the cloud
+/** Parallel to activeSpineArray, filled in by parseAndRenderTOC() */
+let activeChapterTitles = []; 
+/** Last chapter index pushed to the cloud */
+let lastPushedChapterIndex = null; 
 let lastSelectedBookId = null;
 let overscrollCounter = 0;
-let activeGroupFilterId = null; // null = Global View
-let activeGroupFilterColor = null; // backgroundColor of the group currently being viewed
+/** null = Global View */
+let activeGroupFilterId = null; 
+/** backgroundColor of the group currently being viewed */
+let activeGroupFilterColor = null; 
 
 let globalLibraryViewMode = "grouped";
 
@@ -45,6 +51,11 @@ window.addEventListener("DOMContentLoaded", () => {
   setupKeyboardListeners();
 });
 
+/**
+Switches the library view mode (e.g. "grouped" vs "all") and re-renders.
+Switching to "all" also exits any active group drill-down.
+@param {string} modeValue - New value for globalLibraryViewMode.
+*/
 function changeLibraryViewMode(modeValue) {
   globalLibraryViewMode = modeValue;
   // Exit any group drill-down when switching view modes
@@ -55,11 +66,12 @@ function changeLibraryViewMode(modeValue) {
   }
 }
 
-/*=================================================================
- HARD RELOAD
- Mirrors what Ctrl+Shift+R does in a desktop browser, primarily for mobile
- where that shortcut doesn't exist.
- ================================================================= */
+/**
+ Hard-reloads the app: unregisters the Service Worker, clears Cache Storage, then
+ forces a fresh network fetch via a cache-busting query param.
+
+ Mirrors Ctrl+Shift+R, mainly for mobile where that shortcut doesn't exist.
+*/
 async function hardReloadApp() {
   const btn = document.getElementById("btn-hard-reload");
   if (btn) {

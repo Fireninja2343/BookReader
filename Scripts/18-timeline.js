@@ -16,7 +16,7 @@
       09-stats-and-context-menu.js calls into.
 
  The book-title tooltip (modes 1-2) reuses the positionFlyoutMenu()-based
- pattern from showHistoryDayTooltip() in 13-reading-history.js, against
+ pattern from showHistoryDayTooltip() in 17-reading-history.js, against
  its own #completion-timeline-tooltip element so the two never collide.
 
  Mode 4 (Gantt) has its own nested sub-system on top of the above: three
@@ -32,26 +32,20 @@
 // -----------------------------------------------------------------
 // 1. DATA LAYER
 // -----------------------------------------------------------------
-/*
- Single source of truth for every timeline mode. Shape:
-   {
-     monthOrder: ["2026-01", "2026-02", ...],     // sorted ascending, one entry per month with >=1 completion
-     completionsByMonth: {
-       "2026-01": { count: 2, books: [{id,title}, ...] }
-     },
-     books: [ ...completed books (isRead && completedDate) ... ],
-     ganttBooks: [ ...completed/in-progress/paused books, for mode 4 ... ],
-   }
+/**
+ Single source of truth for every timeline mode. Keyed by "YYYY-MM" strings, matching the format already used
+ elsewhere in the stats view (e.g. renderReadingSpeedProgression).
 
- Keyed by "YYYY-MM" strings, matching the format already used elsewhere
- in the stats view (e.g. renderReadingSpeedProgression).
+ ganttBooks is separate from books rather than widening it: modes 1-3 (list/calendar/graph) are strictly
+ "completions per month", while mode 4 (Gantt) also needs in-progress/paused books to draw their bars.
+ Never-started books (READING_STATUS.NOT_STARTED) are excluded from both - nothing to draw a bar for.
 
- ganttBooks is separate from books rather than widening it: modes 1-3
- (list/calendar/graph) are strictly "completions per month", while mode 4
- (Gantt) also needs in-progress/paused books to draw their bars.
- Never-started books (READING_STATUS.NOT_STARTED) are excluded from both -
- nothing to draw a bar for.
-*/
+ @param {Array<Object>} books - The full book list to build the dataset from.
+ @returns {{monthOrder: string[], completionsByMonth: Object<string, {count: number, books: Array<{id, title}>}>,
+ books: Array<Object>, ganttBooks: Array<Object>}}
+ monthOrder is sorted ascending, one entry per month with >=1 completion. books is every completed book
+ (isRead && completedDate). ganttBooks is every completed/in-progress/paused book, for mode 4.
+ */
 function buildCompletionTimelineData(books) {
     const completionsByMonth = {};
     const completedBooks = [];
@@ -81,24 +75,35 @@ function buildCompletionTimelineData(books) {
     return { monthOrder, completionsByMonth, books: completedBooks, ganttBooks };
 }
 
-/*
- Shared month-label formatter, matching the "Month Year" long-form label
- already used across the stats view (renderCompletionTimeline's original
- label format, renderReadingSpeedProgression's month headers).
-*/
+/**
+ Shared month-label formatter, matching the "Month Year" long-form label already used across the stats view
+ (renderCompletionTimeline's original label format, renderReadingSpeedProgression's month headers).
+
+ @param {string} monthKey - A "YYYY-MM" key.
+ @param {Intl.DateTimeFormatOptions} [options] - Formatting options passed to toLocaleDateString().
+ @returns {string} The formatted label.
+ */
 function formatTimelineMonthLabel(monthKey, options = { month: "long", year: "numeric" }) {
     const [year, month] = monthKey.split("-");
     return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(undefined, options);
 }
 
-// Adds `count` months to a "YYYY-MM" key, returning a new "YYYY-MM" key.
+/**
+ @param {string} monthKey - A "YYYY-MM" key.
+ @param {number} count - Number of months to add (negative to subtract).
+ @returns {string} The resulting "YYYY-MM" key.
+ */
 function addMonthsToKey(monthKey, count) {
     const [year, month] = monthKey.split("-").map(Number);
     const d = new Date(year, month - 1 + count, 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// Builds every "YYYY-MM" key from `startKey` to `endKey` inclusive, in order.
+/**
+ @param {string} startKey - A "YYYY-MM" key.
+ @param {string} endKey - A "YYYY-MM" key.
+ @returns {string[]} Every "YYYY-MM" key from startKey to endKey inclusive, in order.
+ */
 function enumerateMonthRange(startKey, endKey) {
     const out = [];
     let cursor = startKey;
@@ -153,7 +158,7 @@ function setTimelineMode(modeId) {
    - "scroll": a fixed px-per-day scale instead of a percentage-of-container
      scale, so bar density never changes as history grows - the container
      itself grows wider instead, inside a horizontally-scrolling wrapper
-     (mirrors .heatmap-scroll-wrapper's pattern in 13-reading-history.js).
+     (mirrors .heatmap-scroll-wrapper's pattern in 17-reading-history.js).
    - "windowed": globalEnd is pinned to right now (not the latest entry)
      and globalStart is pinned to a person-chosen distance before that -
      one of ganttWindowPresets - so the visible span is a constant,
@@ -170,7 +175,7 @@ let ganttScaleMode = getUserConfig().ganttScaleMode || "infinite";
 // user-configurable; this is a rendering density, not a data limit.
 const GANTT_SCROLL_PX_PER_DAY = Config.Timelines.GANTT_SCROLL_PX_PER_DAY;
 
-/*
+/**
  Seed presets shown the first time someone opens Windowed mode with no
  saved presets yet - deliberately small and calendar-shaped (not "30 days"
  style raw counts) since that's how a person actually thinks about "how
@@ -216,14 +221,13 @@ function setActiveGanttWindowPreset(presetId) {
     renderCompletionTimeline(buildCompletionTimelineData(loadedBooksMemory));
 }
 
-/*
- Adds a new user-defined preset (label + magnitude/unit, converted to ms)
- and makes it the active one. valueMs uses real calendar-ish approximations
- (30-day months, 365-day years) rather than exact month-length math (unlike
- addMonthsToKey() above) since a Gantt window is a rough lookback distance,
- not a calendar-anchored range - "3 months" here always means the same
- fixed span regardless of which month it's measured from.
-*/
+/**
+ Adds a new user-defined Gantt window preset, saves it to storage, sets it as active, and re-renders the timeline.
+
+ @param {string} label - Display label for the preset.
+ @param {number|string} amount - Magnitude, in `unit` units.
+ @param {string} unit - One of "days", "weeks", "months", "years".
+ */
 function addGanttWindowPreset(label, amount, unit) {
     const unitMs = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000, years: 365 * 86400000 };
     const valueMs = Math.round(Number(amount)) * (unitMs[unit] || unitMs.days);
@@ -237,6 +241,13 @@ function addGanttWindowPreset(label, amount, unit) {
     renderCompletionTimeline(buildCompletionTimelineData(loadedBooksMemory));
 }
 
+/**
+ Updates an existing Gantt window preset by ID and re-renders the timeline.
+ @param {string} presetId - The preset to edit.
+ @param {string} label - New display label for the preset.
+ @param {number|string} amount - New magnitude, in `unit` units.
+ @param {string} unit - One of "days", "weeks", "months", "years".
+ */
 function editGanttWindowPreset(presetId, label, amount, unit) {
     const unitMs = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000, years: 365 * 86400000 };
     const valueMs = Math.round(Number(amount)) * (unitMs[unit] || unitMs.days);
@@ -248,7 +259,11 @@ function editGanttWindowPreset(presetId, label, amount, unit) {
     saveGanttWindowPresets(presets);
     renderCompletionTimeline(buildCompletionTimelineData(loadedBooksMemory));
 }
+/**
+ Deletes a Gantt window preset by ID, falls back active preset if needed, and re-renders the timeline.
 
+ @param {string} presetId
+ */
 function deleteGanttWindowPreset(presetId) {
     const presets = getGanttWindowPresets().filter((p) => p.id !== presetId);
     saveGanttWindowPresets(presets);
@@ -262,14 +277,15 @@ function deleteGanttWindowPreset(presetId) {
     renderCompletionTimeline(buildCompletionTimelineData(loadedBooksMemory));
 }
 
-/*
- Single place that turns (entries, scaleMode, presets) into the
- {globalStart, globalEnd, totalSpanMs, pxPerDay} numbers
- renderTimelineModeGantt() lays bars out against - see the "infinite" /
- "scroll" / "windowed" comment block above for what each mode means.
- pxPerDay is null for "infinite"/"windowed" (both use %-of-container
- layout); only "scroll" uses it.
-*/
+/**
+ Single place that turns (entries, scaleMode, presets) into the layout numbers renderTimelineModeGantt() lays
+ bars out against - see the "infinite" / "scroll" / "windowed" comment block above for what each mode means.
+
+ @param {Array<Object>} entries - Gantt entries, as built by buildGanttEntryForBook().
+ @param {string} scaleMode - One of "infinite", "scroll", "windowed".
+ @returns {{globalStart: number, globalEnd: number, totalSpanMs: number, pxPerDay: number|null}}
+ pxPerDay is null for "infinite"/"windowed" (both use %-of-container layout); only "scroll" uses it.
+ */
 function computeGanttScale(entries, scaleMode) {
     if (scaleMode === "windowed") {
         const presetId = getActiveGanttWindowPresetId();
@@ -295,12 +311,13 @@ function computeGanttScale(entries, scaleMode) {
     return { globalStart, globalEnd, totalSpanMs, pxPerDay: null };
 }
 
-/*
- The 3 small scale-mode buttons (Infinite/Scroll/Windowed) that appear to
- the right of the main "📊 Gantt" button, only while Gantt is the active
- mode - see .gantt-scale-controls in styles.css for the rise-up+fade-in
+/**
+ The 3 small scale-mode buttons (Infinite/Scroll/Windowed) that appear to the right of the main "📊 Gantt"
+ button, only while Gantt is the active mode - see .gantt-scale-controls in styles.css for the rise-up+fade-in
  entrance. Windowed additionally reveals the preset chip row underneath.
-*/
+
+ @returns {string} The controls HTML.
+ */
 function buildGanttScaleControlsHtml() {
     const scaleButtons = [
         { id: "infinite", label: "Infinite" },
@@ -319,14 +336,14 @@ function buildGanttScaleControlsHtml() {
     `;
 }
 
-/*
- One chip per saved preset plus a trailing "+" chip to create a new one.
- Edit/delete affordances are hover-revealed (see .gantt-preset-chip-actions
- in styles.css) rather than always-visible, so the row reads as plain
- selectable chips at a glance and only shows management controls on
- intent - same reveal-on-hover approach already used for
- .gantt-bar-too-narrow's inline label toggling.
-*/
+/**
+ One chip per saved preset plus a trailing "+" chip to create a new one. Edit/delete affordances are
+ hover-revealed (see .gantt-preset-chip-actions in styles.css) rather than always-visible, so the row reads as
+ plain selectable chips at a glance and only shows management controls on intent - same reveal-on-hover
+ approach already used for .gantt-bar-too-narrow's inline label toggling.
+
+ @returns {string} The preset row HTML.
+ */
 function buildGanttWindowPresetChipsHtml() {
     const presets = getGanttWindowPresets();
     const activeId = getActiveGanttWindowPresetId();
@@ -349,13 +366,13 @@ function buildGanttWindowPresetChipsHtml() {
     `;
 }
 
-/*
- Swaps the preset row into an inline create/edit form in place - no modal,
- matching the "no popup" preference already given for the scale controls
- above. presetId is null when creating a new preset, or an existing
- preset's id when editing one; either way the row re-renders back to
- normal chips on save/cancel via renderCompletionTimeline().
-*/
+/**
+ Swaps the preset row into an inline create/edit form in place - no modal, matching the "no popup" preference
+ already given for the scale controls above. Either way the row re-renders back to normal chips on save/cancel
+ via renderCompletionTimeline().
+
+ @param {string|null} presetId - The preset being edited, or null when creating a new one.
+ */
 function showGanttPresetForm(presetId) {
     const row = document.getElementById("gantt-preset-row");
     if (!row) return;
@@ -405,13 +422,14 @@ function submitGanttPresetForm(presetId) {
 // -----------------------------------------------------------------
 // 3. RENDER SHELL - mode switcher + dispatch to the active mode
 // -----------------------------------------------------------------
-/*
- Entry point called from showStatsViewState() in 09-stats-and-context-menu.js,
- same call signature as the old renderCompletionTimeline(completionsByMonth)
- it replaces - except this now takes the full data object so modes beyond
- the month list (which need book-level and date-range data the old plain
- count map didn't carry) have what they need without a second data pass.
-*/
+/**
+ Entry point called from showStatsViewState() in 09-stats-and-context-menu.js, same call signature as the old
+ renderCompletionTimeline(completionsByMonth) it replaces - except this now takes the full data object so
+ modes beyond the month list (which need book-level and date-range data the old plain count map didn't carry)
+ have what they need without a second data pass.
+
+ @param {Object} data - The dataset built by buildCompletionTimelineData().
+ */
 function renderCompletionTimeline(data) {
     const container = document.getElementById("stats-completion-timeline");
     if (!container) return;
@@ -458,14 +476,16 @@ function renderCompletionTimeline(data) {
 // -----------------------------------------------------------------
 // SHARED TOOLTIP (book titles for a given month) - modes 1 & 2
 // -----------------------------------------------------------------
-/*
- Mirrors showHistoryDayTooltip()/positionFlyoutMenu() in 13-reading-history.js
- exactly, just keyed by month instead of by day, and rendered against its
- own #completion-timeline-tooltip element. Height-limited with internal
- scroll (see .completion-timeline-tooltip-list in styles.css) so a month
- with a large number of completions never grows the popup itself off
- screen - only the list inside it scrolls.
-*/
+/**
+ Mirrors showHistoryDayTooltip()/positionFlyoutMenu() in 17-reading-history.js exactly, just keyed by month
+ instead of by day, and rendered against its own #completion-timeline-tooltip element. Height-limited with
+ internal scroll (see .completion-timeline-tooltip-list in styles.css) so a month with a large number of
+ completions never grows the popup itself off screen - only the list inside it scrolls.
+
+ @param {MouseEvent} event - The triggering mouseenter event, used to position the tooltip.
+ @param {string} monthKey - The "YYYY-MM" key to show details for.
+ @param {Object} data - The dataset built by buildCompletionTimelineData().
+ */
 function showCompletionMonthTooltip(event, monthKey, data) {
     const tooltip = document.getElementById("completion-timeline-tooltip");
     if (!tooltip) return;
@@ -512,14 +532,15 @@ function renderTimelineModeMonthList(container, data) {
 // =================================================================
 // MODE 2 - CALENDAR TIMELINE (per-year grid of month boxes)
 // =================================================================
-/*
- One block per year, trimmed to that year's own first->last active month
- (not the global first->last active month), with inactive months in
- between still rendered as empty boxes so gaps within an active year are
- visible. A year with zero completions that falls between two active
- years collapses to a single grayed-out placeholder rather than 12 empty
- boxes, since there's nothing month-level to show for it.
-*/
+/**
+ One block per year, trimmed to that year's own first->last active month (not the global first->last active
+ month), with inactive months in between still rendered as empty boxes so gaps within an active year are
+ visible. A year with zero completions that falls between two active years collapses to a single grayed-out
+ placeholder rather than 12 empty boxes, since there's nothing month-level to show for it.
+
+ @param {HTMLElement} container - The element to render into.
+ @param {Object} data - The dataset built by buildCompletionTimelineData().
+ */
 function renderTimelineModeCalendar(container, data) {
     const years = data.monthOrder.map((k) => Number(k.split("-")[0]));
     const minYear = Math.min(...years);
@@ -696,28 +717,26 @@ function showTimelineGraphPointTooltip(event, index) {
 // =================================================================
 // MODE 4 - READING JOURNEY GANTT TIMELINE
 // =================================================================
-/*
- One horizontal bar per book that's been started (completed, in progress,
- or paused - see getBookReadingStatus() in 10-utils.js; never-started books
- have no reading period and are excluded). The bar's start is the earliest
- real reading activity found for the book; its end is completedDate for a
- completed book, or the most recent real activity for an in-progress/paused
- book (never "now" - a paused book's bar stops exactly where its reading
- did, since the whole point of Paused is that nothing has happened since).
+/**
+ One horizontal bar per book that's been started (completed, in progress, or paused - see
+ getBookReadingStatus() in 14-utils.js; never-started books have no reading period and are excluded). The
+ bar's start is the earliest real reading activity found for the book; its end is completedDate for a
+ completed book, or the most recent real activity for an in-progress/paused book (never "now" - a paused
+ book's bar stops exactly where its reading did, since the whole point of Paused is that nothing has happened
+ since).
 
- Books with no firstOpened and no session/history data at all can't reach
- this function (getBookReadingStatus() would have called them notStarted),
- so every entry here has a real start point.
+ Books with no firstOpened and no session/history data at all can't reach this function
+ (getBookReadingStatus() would have called them notStarted), so every entry here has a real start point.
 
- Bar color = the book's group tint if it belongs to a group (mirrors
- --group-tint usage on .book-card in styles.css), otherwise --accent.
- Bar opacity is modulated along its own length using that book's
- readingHistory entries (see 13-reading-history.js) as a rough day-by-day
- "how much was read that day" signal, so a bar visually thickens/darkens
- across days with real reading activity and fades across days with none -
- without needing a second data source beyond what's already recorded per
- book.
-*/
+ Bar color = the book's group tint if it belongs to a group (mirrors --group-tint usage on .book-card in
+ styles.css), otherwise --accent. Bar opacity is modulated along its own length using that book's
+ readingHistory entries (see 17-reading-history.js) as a rough day-by-day "how much was read that day" signal,
+ so a bar visually thickens/darkens across days with real reading activity and fades across days with none -
+ without needing a second data source beyond what's already recorded per book.
+
+ @param {HTMLElement} container - The element to render into.
+ @param {Object} data - The dataset built by buildCompletionTimelineData().
+ */
 function renderTimelineModeGantt(container, data) {
     let entries = data.ganttBooks
         .map((book) => buildGanttEntryForBook(book))
@@ -822,20 +841,13 @@ function renderTimelineModeGantt(container, data) {
         : innerHtml;
 }
 
-/*
- Builds one Gantt entry for a book, or null if it has no real start point
- (shouldn't normally happen - defensive fallback for malformed data).
+/**
+ Builds a Gantt chart entry for a book based on activity intervals and completion dates.
 
-   - startMs: earliest real activity (readingSessions/readingHistory),
-     falling back to firstOpened for older pre-session records.
-   - endMs: completedDate if completed; otherwise the most recent real
-     activity - deliberately not "now", so an in-progress bar ends at its
-     actual last page turned, not stretching to today on every view.
-   - pauseGaps: gaps >= Config.Reading.PAUSED_INACTIVITY_THRESHOLD_MS
-     between activity intervals (see buildGanttPauseMarkers() below, which
-     turns these into the "|...|" portal markers). An array since a book
-     can have more than one pause, though most have zero or one.
-*/
+ @param {Object} book - The book to build an entry for.
+ @returns {{book: Object, status: string, startMs: number, endMs: number, hasRealStart: boolean,
+ hasRealEnd: boolean, pauseGaps: Array<{start: number, end: number}>}|null}
+ */
 function buildGanttEntryForBook(book) {
     const status = getBookReadingStatus(book);
     const intervals = collectGanttActivityIntervals(book);
@@ -879,16 +891,17 @@ function buildGanttEntryForBook(book) {
     return { book, status, startMs, endMs, hasRealStart: true, hasRealEnd, pauseGaps };
 }
 
-/*
- Merges each book's readingSessions ({start, end}) and readingHistory
- ({startTimestamp, endTimestamp}) entries into one sorted, non-overlapping
- list of {start, end} activity intervals. Both arrays can independently
- record roughly the same time range (a session and its matching history
- segment are opened/closed together - see continueOrStartReadingSession()/
- endReadingSession() in 09-stats-and-context-menu.js), so overlapping or
- touching intervals are merged into one rather than counted as two separate
- bursts of activity with a fake "gap" of zero between them.
-*/
+/**
+ Merges each book's readingSessions ({start, end}) and readingHistory ({startTimestamp, endTimestamp}) entries
+ into one sorted, non-overlapping list of {start, end} activity intervals. Both arrays can independently
+ record roughly the same time range (a session and its matching history segment are opened/closed together -
+ see continueOrStartReadingSession()/endReadingSession() in 09-stats-and-context-menu.js), so overlapping or
+ touching intervals are merged into one rather than counted as two separate bursts of activity with a fake
+ "gap" of zero between them.
+
+ @param {Object} book - The book to collect activity intervals for.
+ @returns {Array<{start: number, end: number}>} Sorted, non-overlapping activity intervals.
+ */
 function collectGanttActivityIntervals(book) {
     const raw = [];
 
@@ -927,17 +940,17 @@ function collectGanttActivityIntervals(book) {
     return merged;
 }
 
-/*
- Finds every gap between consecutive merged activity intervals that's long
- enough to count as a real pause (same threshold used by
- getBookReadingStatus() in 10-utils.js, so a book showing as "Paused"
- always has at least one gap marker on its own bar, and the two systems
- can never disagree about what counts as a pause). Returns an array
- (rather than at most one gap) so a book that's been picked up and set
- down several times shows every pause, not just the most recent one -
- today that's most often zero or one entries, but nothing here assumes
- that's a limit.
-*/
+/**
+ Finds every gap between consecutive merged activity intervals that's long enough to count as a real pause
+ (same threshold used by getBookReadingStatus() in 14-utils.js, so a book showing as "Paused" always has at
+ least one gap marker on its own bar, and the two systems can never disagree about what counts as a pause).
+
+ @param {Array<{start: number, end: number}>} intervals - Merged activity intervals, as returned by
+ collectGanttActivityIntervals().
+ @returns {Array<{start: number, end: number}>} Every pause gap, in order. An array (rather than at most one
+ gap) so a book that's been picked up and set down several times shows every pause, not just the most recent
+ one - today that's most often zero or one entries, but nothing here assumes that's a limit.
+ */
 function findGantPauseGaps(intervals) {
     const gaps = [];
     for (let i = 1; i < intervals.length; i++) {
@@ -951,17 +964,17 @@ function findGantPauseGaps(intervals) {
     return gaps;
 }
 
-/*
- Renders one pair of "|" portal markers per pause gap in entry.pauseGaps,
- positioned at the gap's start and end as a percentage of this bar's own
- *visible* width. Uses clampedStartMs/clampedEndMs (falling back to
- startMs/endMs when a caller hasn't set clamped* fields at all) rather than
- the book's full unclipped span, since in "windowed" mode the drawn bar
- only covers the clipped portion - anchoring against the full span there
- would push markers outside the bar or bunch them incorrectly. In
- "infinite"/"scroll" mode clamped == unclipped, so this is a no-op change
- for those two.
-*/
+/**
+ Renders one pair of "|" portal markers per pause gap in entry.pauseGaps, positioned at the gap's start and
+ end as a percentage of this bar's own *visible* width. Uses clampedStartMs/clampedEndMs (falling back to
+ startMs/endMs when a caller hasn't set clamped* fields at all) rather than the book's full unclipped span,
+ since in "windowed" mode the drawn bar only covers the clipped portion - anchoring against the full span
+ there would push markers outside the bar or bunch them incorrectly. In "infinite"/"scroll" mode clamped ==
+ unclipped, so this is a no-op change for those two.
+
+ @param {Object} entry - A Gantt entry, as built by buildGanttEntryForBook().
+ @returns {string} The portal marker HTML, or "" if the entry has no pause gaps.
+ */
 function buildGanttPauseMarkers(entry) {
     if (!entry.pauseGaps || entry.pauseGaps.length === 0) return "";
 
@@ -982,14 +995,15 @@ function buildGanttPauseMarkers(entry) {
         }).join("");
 }
 
-/*
- Reads the book's group color if it has one, using loadedGroupsMemory to
- resolve groupId -> group record. Field name defensively checked as either
- backgroundColor (matching the activeGroupFilterColor state-var comment in
- 01-state.js: "The backgroundColor of whichever group...") or color, so
- this keeps working regardless of which one the group-management module
- actually uses.
-*/
+/**
+ Reads the book's group color if it has one, using loadedGroupsMemory to resolve groupId -> group record.
+ Field name defensively checked as either backgroundColor (matching the activeGroupFilterColor state-var
+ comment in 01-state.js: "The backgroundColor of whichever group...") or color, so this keeps working
+ regardless of which one the group-management module actually uses.
+
+ @param {Object} book - The book to resolve a group tint for.
+ @returns {string|null} The group's color, or null if the book has no group or the group has no color set.
+ */
 function resolveGroupTintForBook(book) {
     if (book.groupId === null || book.groupId === undefined) return null;
     const group = loadedGroupsMemory.find((g) => g.id === book.groupId);
@@ -997,15 +1011,17 @@ function resolveGroupTintForBook(book) {
     return group.backgroundColor || group.color || null;
 }
 
-/*
- Builds a CSS background-image (multi-stop linear-gradient) overlay driven
- by the book's readingHistory entries, so the bar's opacity visually rises
- on days with recorded reading activity and falls on quiet days in
- between. Expressed as an inline `background-image` (layered via CSS
- multiple-backgrounds on top of the solid tint color already set via
- `background`) rather than replacing background entirely, so the group
- tint always still shows through.
-*/
+/**
+ Builds a CSS background-image (multi-stop linear-gradient) overlay driven by the book's readingHistory
+ entries, so the bar's opacity visually rises on days with recorded reading activity and falls on quiet days
+ in between. Expressed as an inline `background-image` (layered via CSS multiple-backgrounds on top of the
+ solid tint color already set via `background`) rather than replacing background entirely, so the group tint
+ always still shows through.
+
+ @param {Object} entry - A Gantt entry, as built by buildGanttEntryForBook().
+ @returns {string} A `background-image:...;` CSS declaration, or "" if the book has no readingHistory in the
+ bar's visible range.
+ */
 function buildGanttActivityGradient(entry) {
     if (!Array.isArray(entry.book.readingHistory) || entry.book.readingHistory.length === 0) {
         return "";
