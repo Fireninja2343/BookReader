@@ -242,6 +242,8 @@
 
 .data-table th {
     padding: 12px;
+    padding-bottom: 10px;
+    padding-top: 10px;
 }
 
 .table-header-row {
@@ -274,6 +276,7 @@
     margin-left: 4px;
     vertical-align: middle;
     line-height: 0.7;
+    gap: 5px;
 }
 
 .stats-sort-arrow {
