@@ -6,29 +6,18 @@ window.addEventListener("blur", stopActiveReadingTimer);
 
 // Hoisted above visibilitychange, which needs it on every hide/show pair.
 const SESSION_INACTIVITY_TIMEOUT_MS = Config.Reading.SESSION_INACTIVITY_TIMEOUT_MS;
+const PAUSE_SPLIT_THRESHOLD_MS = Config.Reading.PAUSE_SPLIT_THRESHOLD_MS;
 
-// The Page Visibility API's hidden/visible state is more reliable than focus/blur for
-// detecting an actually-viewed tab (some window/PWA switching cases miss focus/blur).
-// Timestamp of the most recent hide; null while not hidden.
-let hiddenAt = null;
+// Handles tab state changes to track active reading time accurately.
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
         stopActiveReadingTimer();
         saveTimeToDB();
-        hiddenAt = Date.now();
-        /*
-        No endReadingSession() here: ending on every hide would fragment one sitting into
-        several short, noise-prone session records. The decision is deferred to the
-        visible branch below, based on how long the tab was actually away.
-        */
+        // Tracks background time using the same pause accumulator if not already manually paused.
+        if (currentPauseStartTime === null) currentPauseStartTime = Date.now();
     } else if (document.hasFocus()) {
-        if (hiddenAt !== null) {
-            const awayMs = Date.now() - hiddenAt;
-            if (awayMs >= SESSION_INACTIVITY_TIMEOUT_MS) {
-                endReadingSession("hidden-timeout");
-            }
-            hiddenAt = null;
-        }
+        // Resolves passive background pauses using SESSION_INACTIVITY_TIMEOUT_MS unless manually paused.
+        if (!pauseTracking) resolvePauseOnResume(SESSION_INACTIVITY_TIMEOUT_MS, "hidden-split");
         startActiveReadingTimer();
     }
 });
@@ -40,7 +29,7 @@ window.addEventListener("beforeunload", () => {
 });
 
 const IDLE_THRESHOLD_MS = Config.Sync.IDLE_THRESHOLD_MS;
-const DB_UPDATE_FREQUENCY = Config.Sync.CLOUD_PROGRESS_PUSH_INTERVAL_MS / 1000;
+const DB_UPDATE_FREQUENCY = Config.Reading.DB_UPDATE_FREQUENCY_MS / 1000;
 const TRACKING_TICK_MS = Config.Reading.TRACKING_TICK_MS;
 
 let lastActivityTime = Date.now();
@@ -56,8 +45,7 @@ document.getElementById("reader-container")?.addEventListener("scroll", recordUs
 document.getElementById("reader-container")?.addEventListener("click", recordUserActivity);
 
 /**
- Runs the reading-timer heartbeat: advances timeSpentSeconds while the reader is
- genuinely active, and checks the session-inactivity timeout each tick.
+ Runs the reading-timer heartbeat: tracks active time and checks session inactivity.
  */
 function startActiveReadingTimer() {
     if (focusedTimeTrackerHeartbeatInterval) return;
@@ -67,12 +55,14 @@ function startActiveReadingTimer() {
         if (readerActive && activeBookObject && document.hasFocus() && !document.hidden && isUserActive && !pauseTracking) {
             if (!activeBookObject.timeSpentSeconds) activeBookObject.timeSpentSeconds = 0;
             activeBookObject.timeSpentSeconds += (TRACKING_TICK_MS / 1000);
-            // Batches DB writes instead of writing every tick, to reduce disk I/O.
+            
+            // Batches DB writes to reduce I/O.
             if (activeBookObject.timeSpentSeconds % DB_UPDATE_FREQUENCY === 0) {
                 saveTimeToDB();
             }
         }
-        checkSessionInactivityTimeout();
+        // Skip during manual pauses to let resolvePauseOnResume handle split vs. subtract.
+        if (!pauseTracking) checkSessionInactivityTimeout();
     }, TRACKING_TICK_MS);
 }
 
@@ -81,15 +71,46 @@ function stopActiveReadingTimer() {
     focusedTimeTrackerHeartbeatInterval = null;
 }
 
+/**
+ Toggles manual pause, suspending time tracking and resolving session status on resume.
+ 
+ @param {boolean} [pause=true] - Whether to pause (`true`) or resume (`false`).
+ */
 function pauseActiveReadingTimer(pause = true){
     if(pause){
         document.getElementById("pause-tracking").style.display = "none";
         document.getElementById("unpause-tracking").style.display = "inline-block";
+        currentPauseStartTime = Date.now();
     } else if(!pause){
         document.getElementById("pause-tracking").style.display = "inline-block";
         document.getElementById("unpause-tracking").style.display = "none";
+        resolvePauseOnResume(PAUSE_SPLIT_THRESHOLD_MS, "paused-split");
     }
     pauseTracking = pause;
+}
+
+/**
+ Handles time accumulation and session splits when resuming from a manual pause or background state.
+
+ - Short pauses (<= threshold): Appends pause duration to session and updates last interaction.
+ - Long pauses (> threshold): Ends the session retroactively as of when the pause began.
+ 
+ @param {number} splitThresholdMs - Max duration (ms) before splitting the session.
+ @param {string} reason - Logged reason passed to `endReadingSession` on split.
+ */
+function resolvePauseOnResume(splitThresholdMs, reason) {
+    if (currentPauseStartTime === null) return;
+    const pauseEndedAt = Date.now();
+    const pauseDurationMs = pauseEndedAt - currentPauseStartTime;
+
+    if (currentSessionStartTime !== null && pauseDurationMs > splitThresholdMs) {
+        endReadingSession(reason, currentPauseStartTime);
+    } else if (currentSessionStartTime !== null) {
+        currentSessionPausedMs += pauseDurationMs;
+        currentSessionLastInteractionTime = pauseEndedAt;
+    }
+
+    currentPauseStartTime = null;
 }
 
 /**
@@ -160,20 +181,28 @@ function checkSessionInactivityTimeout() {
 /**
  Closes and persists the active reading session through appendReadingSession(). Safe to
  call from cleanup paths because it does nothing when no session is open.
+
+ @param {string} reason - Why the session is ending (logged only).
+ @param {number} [asOfTime=Date.now()] - Timestamp to treat as the session's end instead
+   of now. Used to retroactively close a session as of when a long manual pause began,
+   so the paused stretch is excluded rather than counted as reading time (see
+   resolvePauseOnResume()).
  */
-function endReadingSession(reason) {
-    if (typeof closeHistorySegment === "function") closeHistorySegment();
+function endReadingSession(reason, asOfTime = Date.now()) {
+    if (typeof closeHistorySegment === "function") closeHistorySegment(asOfTime);
 
     if (currentSessionStartTime === null || !activeBookObject || !activeBookObject.id) {
         currentSessionStartTime = null;
         currentSessionLastInteractionTime = null;
         currentSessionStartChapterPointer = null;
         currentSessionStartBookScalePct = null;
+        currentSessionPausedMs = 0;
         return;
     }
 
-    const endTime = Date.now();
-    const durationSeconds = Math.round((endTime - currentSessionStartTime) / 1000);
+    const endTime = asOfTime;
+    // Subtracts accumulated short-pause dead time (see resolvePauseOnResume())
+    const durationSeconds = Math.max(0, Math.round((endTime - currentSessionStartTime - currentSessionPausedMs) / 1000));
 
     // Sessions under a few seconds are noise (accidental open/close, or a double-fire),
     // not meaningful reading sessions.
@@ -182,6 +211,7 @@ function endReadingSession(reason) {
         currentSessionLastInteractionTime = null;
         currentSessionStartChapterPointer = null;
         currentSessionStartBookScalePct = null;
+        currentSessionPausedMs = 0;
         return;
     }
 
@@ -214,6 +244,7 @@ function endReadingSession(reason) {
     currentSessionLastInteractionTime = null;
     currentSessionStartChapterPointer = null;
     currentSessionStartBookScalePct = null;
+    currentSessionPausedMs = 0;
 
     appendReadingSession(bookId, sessionRecord);
 }

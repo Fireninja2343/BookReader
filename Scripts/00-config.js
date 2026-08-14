@@ -18,7 +18,7 @@ const Config = {
   },
   Sync: {
     FILE_CHUNK_SIZE: 700000,
-    CLOUD_PROGRESS_PUSH_INTERVAL_MS: 20000,
+    CLOUD_PROGRESS_PUSH_INTERVAL_MS: 30000,
     IDLE_THRESHOLD_MS: 20000,
     FORCE_PUSH_MIN_GAP_MS : 2000,
     PUSH_RETRY_IMMEDIATE_ATTEMPTS: 2,
@@ -27,6 +27,8 @@ const Config = {
   },
   Reading: {
     SESSION_INACTIVITY_TIMEOUT_MS: 5 * 60 * 1000, //mins * 60(from min->s) * 1000(from s->ms)
+    PAUSE_SPLIT_THRESHOLD_MS: 2 * (5 * 60 * 1000), // 2x inactivity timeout
+    DB_UPDATE_FREQUENCY_MS: 10000,
     MAX_STORED_SESSIONS_PER_BOOK: 50,
     MAX_STORED_HISTORY_ENTRIES_PER_BOOK: 365,
     PAUSED_INACTIVITY_THRESHOLD_MS: 7 * 24 * 60 * 60 * 1000, // Days (*24 -> h *60 -> min *60 -> s *1000 ->ms)

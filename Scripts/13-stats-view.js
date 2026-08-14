@@ -774,14 +774,6 @@ async function showStatsViewState() {
     const speedProgressionEntries = []; // {book, completedDate, pagesPerHour}
 
     /*
-    Stores real reading session durations from each book's readingSessions log.
-    This is the source of truth for average session length, while older books
-    without session history fall back to the legacy totalSessions/sessionTime
-    values.
-    */
-    const allRealSessionDurationsMins = [];
-
-    /*
     Stores raw per-book metrics collected during the first pass. Averages are
     only available after all books are processed, so delta comparisons and row
     HTML are generated afterward using these already-calculated values.
@@ -801,15 +793,7 @@ async function showStatsViewState() {
         combinedSecondsTracked += getMeaningfulTrackedSeconds(book.timeSpentSeconds);
         totalReadingSessions += (book.totalSessions || 0);
 
-        if (Array.isArray(book.readingSessions) && book.readingSessions.length > 0) {
-            for (const session of book.readingSessions) {
-                if (typeof session.durationSeconds === "number") {
-                    allRealSessionDurationsMins.push(session.durationSeconds / 60);
-                }
-            }
-        } else if (book.totalSessions > 0) {
-            // Fallback for books with no real session log: approximates session time from
-            // the book's total tracked reading time instead.
+        if (book.totalSessions > 0) {
             sessionTime += getMeaningfulTrackedMinutes(book.timeSpentSeconds);
         }
 
@@ -985,16 +969,7 @@ async function showStatsViewState() {
         ? Math.round(completedBooks.reduce((sum, b) => sum + (b.totalPages || 0), 0) / completedBooks.length)
         : 0;
 
-    /*
-    Average reading session length prefers real recorded sessions from
-    readingSessions over the totalSessions/timeSpentSeconds-based estimate.
-
-    Falls back to that estimate only for books without session
-    history, keeping older libraries from losing their average value.
-    */
-    const avgSessionMins = allRealSessionDurationsMins.length
-        ? Math.round(allRealSessionDurationsMins.reduce((sum, m) => sum + m, 0) / allRealSessionDurationsMins.length)
-        : (totalReadingSessions ? Math.round(sessionTime / totalReadingSessions) : 0);
+    const avgSessionMins = totalReadingSessions ? Math.round(sessionTime / totalReadingSessions) : 0;
     // Update standard interface element outputs values
     document.getElementById("stat-total-books").innerText = totalBooksCount;
     document.getElementById("stat-read-books").innerText = readBooksCount;

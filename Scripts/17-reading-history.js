@@ -63,15 +63,16 @@ function recordHistoryChapterVisited(chapterPointer) {
  one long, continuous reading session as a single history entry instead of a pile of tiny fragments, while
  still making sure a crash or surprise tab close never loses more than one flush interval's worth of activity
  (see saveTimeToDB() in 09-stats-and-context-menu.js, which calls this on its existing batched cadence).
+
+ @param {number} [asOfTime=Date.now()] - Timestamp to use as the segment's end instead of
+   now. Used when closing a segment retroactively - e.g. a long manual pause splits the
+   session as of when the pause began, so the paused stretch isn't counted as reading
+   time (see resolvePauseOnResume() in 12-context-menu.js).
  */
-function persistHistorySegment() {
+function persistHistorySegment(asOfTime = Date.now()) {
     if (!currentHistorySegment) return;
-    const now = Date.now();
+    const now = asOfTime;
     const secondsSpent = Math.max(0, Math.round((now - currentHistorySegment.startTimestamp) / 1000));
-    // Mirrors endReadingSession()'s own noise floor - a sub-3-second segment
-    // is almost always this function firing twice in quick succession
-    // (e.g. a chapter-change flush immediately followed by the periodic
-    // one) rather than real activity worth recording.
     if (secondsSpent < 3) return;
 
     upsertReadingHistoryEntry(currentHistorySegment.bookId, {
@@ -87,10 +88,12 @@ function persistHistorySegment() {
  Finalizes and clears the open segment. Called from endReadingSession() alongside appendReadingSession(), so
  both the summary session log and this raw per-day history close out at exactly the same moments: reader
  close, tab hidden, the inactivity timeout, or switching books.
+
+ @param {number} [asOfTime=Date.now()] - See persistHistorySegment().
  */
-function closeHistorySegment() {
+function closeHistorySegment(asOfTime = Date.now()) {
     if (!currentHistorySegment) return;
-    persistHistorySegment();
+    persistHistorySegment(asOfTime);
     currentHistorySegment = null;
 }
 
