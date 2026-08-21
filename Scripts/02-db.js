@@ -180,7 +180,9 @@ const CLOUD_PROGRESS_PUSH_INTERVAL_MS = Config.Sync.CLOUD_PROGRESS_PUSH_INTERVAL
 
  @param {number} bookId - id of the book being updated.
  @param {number} spinePointer - Index into the book's spine array for the current chapter.
- @param {number} scrollPosition - Scroll offset within the current chapter.
+ @param {number} scrollPosition - Scroll position within the current chapter, stored as a
+   fraction (0-1) of the chapter's scrollable height. See `trackReadingProgress()` (10-reader-controls.js) and
+   `launchEpubReader()` (09-epub-reader.js) for where this is computed and restored.
  @param {boolean} [forceImmediateCloudPush=false] - Bypasses the throttle for important
    updates such as chapter changes; still resets the throttle window afterward instead of
    creating extra queued writes.

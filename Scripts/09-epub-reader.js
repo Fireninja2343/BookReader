@@ -61,7 +61,13 @@ async function launchEpubReader(bookObject) {
 
     setTimeout(() => {
       const container = document.getElementById("reader-container");
-      container.scrollTop = bookObject.scrollOffset || 0;
+      /*
+      scrollOffset is stored as a fraction (0-1) of the chapter's scrollable height, not raw pixels.
+      Multiplying back out against this device's own maxScroll is what makes the restored position land at
+      the same reading spot regardless of font size, viewport width, or margins.
+      */
+      const maxScroll = container.scrollHeight - container.clientHeight;
+      container.scrollTop = (bookObject.scrollOffset || 0) * maxScroll;
       trackReadingProgress();
     }, 200);
   } catch (err) {

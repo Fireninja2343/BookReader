@@ -244,7 +244,10 @@ function trackReadingProgress() {
     throttle window could lose a meaningful chapter progress update.
     */
         const chapterHasChangedSinceLastPush = lastPushedChapterIndex !== activeSpinePointer;
-        updateBookProgressInDB(activeBookObject.id, activeSpinePointer, top, chapterHasChangedSinceLastPush);
+        /*
+        Stored as a fraction (innerPct, 0-1) of the chapter's scrollable height
+        */
+        updateBookProgressInDB(activeBookObject.id, activeSpinePointer, innerPct, chapterHasChangedSinceLastPush);
         if (chapterHasChangedSinceLastPush) {
             lastPushedChapterIndex = activeSpinePointer;
             /*
