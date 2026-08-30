@@ -236,6 +236,7 @@ input[type="range"]::-moz-range-thumb {
     left: 50%;
     transform: translate(-50%, -50%);
     margin: 0;
+    z-index: 100;
 }
 
 .custom-modal::backdrop {

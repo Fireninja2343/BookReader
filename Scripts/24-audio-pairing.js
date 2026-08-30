@@ -20,20 +20,25 @@ const supportsFileHandles = typeof window.showOpenFilePicker === "function";
    the user cancels the picker.
 */
 async function pickAudioFile() {
+  console.log("[24-audio-pairing DEBUG] supportsFileHandles:", supportsFileHandles);
   if (supportsFileHandles) {
     try {
       const [handle] = await window.showOpenFilePicker({
         types: [{ description: "Audiobook", accept: { "audio/mp4": [".m4b", ".m4a"] } }],
       });
+      console.log("[24-audio-pairing DEBUG] picker returned handle:", handle);
       const file = await handle.getFile();
+      console.log("[24-audio-pairing DEBUG] resolved file from handle:", file);
       return { file, handle };
     } catch (err) {
       // AbortError = user cancelled the picker; not a real failure.
+      console.log("[24-audio-pairing DEBUG] showOpenFilePicker threw:", err.name, err.message);
       if (err.name !== "AbortError") console.warn("[24-audio-pairing] File picker failed:", err);
       return null;
     }
   }
 
+  console.log("[24-audio-pairing DEBUG] falling back to plain <input> - no handle will be available");
   // Fallback for browsers without showOpenFilePicker: a hidden plain input.
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -213,6 +218,7 @@ function closeAudioPairingPanel() {
 async function handlePairAudiobookClick() {
   if (audioPairingTargetBookId == null) return;
   const picked = await pickAudioFile();
+  console.log("[24-audio-pairing DEBUG] handlePairAudiobookClick picked:", picked, "handle present?", !!picked?.handle);
   if (!picked) return;
 
   const existing = await getAudiobookForBook(audioPairingTargetBookId);
