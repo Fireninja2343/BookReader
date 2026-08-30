@@ -69,13 +69,13 @@ function handleCardDrop(e) {
   const targetBook = loadedBooksMemory.find(b => b.id === targetBookId);
   if (!targetBook) return;
 
-  // Cross-group drops only prompt while Sort Books by Group Order is active in Manual sort
-  // mode - that's the only situation where books are visually clustered into per-group blocks
-  // (see getBooksInDisplayOrder()/renderGroupBubbleOutlines() in 04-library-view.js), so it's
-  // the only situation where dragging a book into a different block has an obvious, expected
-  // meaning (move it into that group). With the setting off, or any other sort mode, dragging
-  // in "All Books" keeps its original behavior: reorder only, never touches groupId, matching
-  // how it worked before this feature existed.
+  /** Cross-group drops only prompt while Sort Books by Group Order is active in Manual sort
+   mode - that's the only situation where books are visually clustered into per-group blocks
+   (see {@link getBooksInDisplayOrder}/{@link renderGroupBubbleOutlines} in 04-library-view.js), so it's
+   the only situation where dragging a book into a different block has an obvious, expected
+   meaning (move it into that group). With the setting off, or any other sort mode, dragging
+   in "All Books" keeps its original behavior: reorder only, never touches groupId, matching
+   how it worked before this feature existed. */
   const groupOrderedSorting = !!document.getElementById("setting-group-ordered-sorting")?.checked;
   const sortMode = document.getElementById("sort-selector")?.value;
   const isCrossGroupDrop = groupOrderedSorting && sortMode === "manual"

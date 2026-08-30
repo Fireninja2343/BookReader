@@ -3,10 +3,14 @@
 // =================================================================
 let db = null;
 const DB_NAME = Config.Db.DB_NAME;
+const DB_VERSION = Config.Db.DB_VERSION;
 const STORE_BOOKS = Config.Db.STORE_BOOKS;
 const STORE_GROUPS = Config.Db.STORE_GROUPS;
 const STORE_NOTES = Config.Db.STORE_NOTES;
 const STORE_NOTE_GROUPS = Config.Db.STORE_NOTE_GROUPS;
+const STORE_AUDIOBOOKS = Config.Db.STORE_AUDIOBOOKS;
+const STORE_AUDIO_SYNC_POSITION = Config.Db.STORE_AUDIO_SYNC_POSITION;
+const STORE_LAST_AUDIO_CONTEXT = Config.Db.STORE_LAST_AUDIO_CONTEXT;
 
 let focusedTimeTrackerHeartbeatInterval = null;
 let currentActiveContextBookIndexId = null; // Row targeted by the 3-dots panel trigger

@@ -30,7 +30,7 @@ function migrateLegacyStorageKeys() {
 
 function initIndexedDB() {
   migrateLegacyStorageKeys();
-  const request = indexedDB.open(DB_NAME, 2);
+  const request = indexedDB.open(DB_NAME, DB_VERSION);
   request.onupgradeneeded = (e) => {
     const database = e.target.result;
     if (!database.objectStoreNames.contains(STORE_BOOKS)) {
@@ -55,6 +55,21 @@ function initIndexedDB() {
       database.createObjectStore(STORE_NOTE_GROUPS, {
         keyPath: "id",
         autoIncrement: true,
+      });
+    }
+    if (!database.objectStoreNames.contains(STORE_AUDIOBOOKS)) {
+      database.createObjectStore(STORE_AUDIOBOOKS, {
+        keyPath: "bookId",
+      });
+    }
+    if (!database.objectStoreNames.contains(STORE_AUDIO_SYNC_POSITION)) {
+      database.createObjectStore(STORE_AUDIO_SYNC_POSITION, {
+        keyPath: "bookId",
+      });
+    }
+    if (!database.objectStoreNames.contains(STORE_LAST_AUDIO_CONTEXT)) {
+      database.createObjectStore(STORE_LAST_AUDIO_CONTEXT, {
+        keyPath: "key",
       });
     }
   };
@@ -656,7 +671,149 @@ function upsertReadingHistoryEntry(bookId, entry) {
   });
 }
 
-const FORCE_PUSH_MIN_GAP_MS = Config.Sync.FORCE_PUSH_MIN_GAP_MS;
+/**
+ Saves (or overwrites) a paired audiobook's metadata record. One record per
+ book - re-pairing the same book replaces the existing record entirely
+ (e.g. after a confirmed mismatch where the user chose "Continue" with new
+ file metadata).
+
+ No cover art is stored here by design: a paired audiobook is expected to
+ share the same cover as its linked EPUB, and a standalone/no-EPUB-yet
+ audiobook just shows title/author text until one exists. fileHandle is
+ stored separately (see saveAudioFileHandle()) so a plain metadata refresh
+ doesn't need to touch handle permission state.
+
+ @param {number} bookId - id of the EPUB book this audiobook is paired to.
+ @param {Object} metadata - {title, author, duration, chapters} from extractM4bMetadata().
+ @returns {Promise<void>}
+*/
+function pairAudiobook(bookId, metadata) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_AUDIOBOOKS], "readwrite");
+    const store = transaction.objectStore(STORE_AUDIOBOOKS);
+    // get-then-put (rather than a blind put) so re-pairing preserves an
+    // already-stored fileHandle/lastPickedFileName instead of wiping it
+    // every time metadata is refreshed.
+    store.get(bookId).onsuccess = (e) => {
+      const existing = e.target.result || {};
+      const record = {
+        bookId,
+        title: metadata.title ?? null,
+        author: metadata.author ?? null,
+        duration: metadata.duration ?? 0,
+        chapters: metadata.chapters ?? [],
+        fileHandle: existing.fileHandle ?? null,
+        lastPickedFileName: existing.lastPickedFileName ?? null,
+      };
+      store.put(record);
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+/**
+ Stores a FileSystemFileHandle for later one-click resume, alongside the
+ picked file's name (shown in the UI so the user can tell what's about to
+ be reopened before granting permission). Separate from pairAudiobook() so
+ a fresh file pick doesn't require re-extracting/re-diffing metadata.
+
+ File handles are structured-cloneable, so IndexedDB can store them
+ directly - no serialization needed. Silently does nothing if no
+ audiobook record exists yet for this book (pair first).
+
+ @param {number} bookId - id of the book whose audiobook this handle belongs to.
+ @param {FileSystemFileHandle} handle - Handle returned by showOpenFilePicker().
+ @param {string} fileName - Display name of the picked file (handle.name).
+ @returns {Promise<void>}
+*/
+function saveAudioFileHandle(bookId, handle, fileName) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_AUDIOBOOKS], "readwrite");
+    const store = transaction.objectStore(STORE_AUDIOBOOKS);
+    store.get(bookId).onsuccess = (e) => {
+      const record = e.target.result;
+      if (record) {
+        record.fileHandle = handle;
+        record.lastPickedFileName = fileName;
+        store.put(record);
+      }
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+/**
+ Fetches the audiobook record paired to a book, if any.
+ @param {number} bookId - id of the book to look up.
+ @returns {Promise<Object|null>} The audiobook record, or null if unpaired.
+*/
+function getAudiobookForBook(bookId) {
+  return new Promise((resolve) => {
+    const transaction = db.transaction([STORE_AUDIOBOOKS], "readonly");
+    const store = transaction.objectStore(STORE_AUDIOBOOKS);
+    store.get(bookId).onsuccess = (e) => resolve(e.target.result || null);
+  });
+}
+
+/**
+ Fixed key for the single-row STORE_LAST_AUDIO_CONTEXT store - there is only
+ ever one "which paired audiobook gets one-click auto-resume" value app-wide.
+*/
+const LAST_AUDIO_CONTEXT_KEY = "lastAudioContext";
+
+/**
+ Marks a book as the current auto-resume target: the only paired audiobook
+ eligible for one-click file-handle reuse until this changes again. Call
+ whenever the user actively switches to listening on a different paired book.
+
+ @param {number} bookId - id of the book to mark as the active audio context.
+ @returns {Promise<void>}
+*/
+function setLastAudioContext(bookId) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_LAST_AUDIO_CONTEXT], "readwrite");
+    const store = transaction.objectStore(STORE_LAST_AUDIO_CONTEXT);
+    store.put({ key: LAST_AUDIO_CONTEXT_KEY, bookId });
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+/**
+ Reads which bookId (if any) is currently eligible for one-click auto-resume.
+ @returns {Promise<number|null>} The bookId, or null if none set yet.
+*/
+function getLastAudioContext() {
+  return new Promise((resolve) => {
+    const transaction = db.transaction([STORE_LAST_AUDIO_CONTEXT], "readonly");
+    const store = transaction.objectStore(STORE_LAST_AUDIO_CONTEXT);
+    store.get(LAST_AUDIO_CONTEXT_KEY).onsuccess = (e) => {
+      resolve(e.target.result ? e.target.result.bookId : null);
+    };
+  });
+}
+
+/**
+ Fetches the shared audio-sync position record for a book, if any exists yet.
+ STORE_AUDIO_SYNC_POSITION stays empty until Phase 2/3 add the actual
+ position-writing logic - this getter exists now so pairing code (and later
+ phases) share one read path instead of each inventing their own.
+
+ @param {number} bookId - id of the book to look up.
+ @returns {Promise<Object|null>} {bookId, chapterIndex, percentInChapter, userOffset,
+   lastMode, lastUpdated}, or null if no position has been recorded yet.
+*/
+function getAudioSyncPosition(bookId) {
+  return new Promise((resolve) => {
+    const transaction = db.transaction([STORE_AUDIO_SYNC_POSITION], "readonly");
+    const store = transaction.objectStore(STORE_AUDIO_SYNC_POSITION);
+    store.get(bookId).onsuccess = (e) => resolve(e.target.result || null);
+  });
+}
+
+
 let lastForcedCloudProgressPush = {};
 /**
  Immediately pushes a book's current record to the cloud, bypassing the regular

@@ -185,7 +185,13 @@ function parseIlstEntries(bytes) {
   while (offset + 8 <= bytes.length) {
     const entrySize = view.getUint32(offset);
     if (entrySize < 8 || offset + entrySize > bytes.length) break;
-    const entryType = new TextDecoder().decode(bytes.slice(offset + 4, offset + 8));
+    // Decoded byte-by-byte (Latin-1 style) rather than via TextDecoder/UTF-8:
+    // the leading byte of "©nam"/"©ART" is a raw 0xA9, which isn't valid
+    // UTF-8 on its own and TextDecoder mangles it, silently breaking the
+    // "\u00a9nam" key match below. String.fromCharCode keeps it as one
+    // literal byte value per char, matching how the key is compared later.
+    const typeBytes = bytes.slice(offset + 4, offset + 8);
+    const entryType = String.fromCharCode(...typeBytes);
 
     // Nested "data" atom starts right after the entry's own 8-byte header.
     const dataAtomOffset = offset + 8;

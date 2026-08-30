@@ -1,10 +1,14 @@
 const Config = {
   Db: {
     DB_NAME: "LocalBookReaderDB_v1",
+    DB_VERSION: 1,
     STORE_BOOKS: "books",
     STORE_GROUPS: "groups",
     STORE_NOTES: "notes",
     STORE_NOTE_GROUPS: "noteGroups",
+    STORE_AUDIOBOOKS: "audiobooks",
+    STORE_AUDIO_SYNC_POSITION: "audioSyncPosition",
+    STORE_LAST_AUDIO_CONTEXT: "lastAudioContext",
     COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY: "BookReader_CollapsedNoteTagKeys_v1",
     LAST_NOTE_TAGS_STORAGE_KEY: "BookReader_LastNoteTagIds_v1",
     USER_CONFIG_STORAGE_KEY: "BookReader_UserConfig_v1",
@@ -17,7 +21,7 @@ const Config = {
     TARGET_WORDS_PER_TICK: 50,
   },
   Sync: {
-    // Master kill switch for all Firebase reads/writes, SET TO TRUE for sync to work.
+    // Master kill switch for all Firebase reads/writes, SET TO TRUE to resume sync
     SYNC_ACTIVE: false,
     FILE_CHUNK_SIZE: 700000,
     CLOUD_PROGRESS_PUSH_INTERVAL_MS: 30000,
