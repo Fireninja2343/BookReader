@@ -137,14 +137,14 @@
             </button>
           </div>
           <div>
-            <label>Speed:</label>
-            <input type="number" id="audio-pairing-speed-input" style="width: 60px;" min="0" value="1">
-            <button onclick="setAudioSpeed(Number(document.getElementById('audio-pairing-speed-input').value))" oninput="saveAndApplyUserStyles()">Set</button>
+            <label>Speed (<span id="lbl-speed">1.0</span>)</label>
+            <input type="range" id="audio-pairing-speed-input" style="width: max-content;" min="0.05" max="2.5" step="0.01" value="1"
+                oninput="setAudioSpeed(Number(this.value)); saveAndApplyUserStyles();">
           </div>
           <div>
             <label>Volume (<span id="lbl-volume">0.5</span>)</label>
-            <input type="range" id="audio-pairing-volume-input" style="width: max-content;" min="0" max="1" step="0.05" value=".5">
-            <button onclick="setAudioVolume(Number(document.getElementById('audio-pairing-volume-input').value))" oninput="saveAndApplyUserStyles()">Set</button>
+            <input type="range" id="audio-pairing-volume-input" style="width: max-content;" min="0" max="1" step="0.05" value=".5"
+                oninput="setAudioVolume(Number(this.value)); saveAndApplyUserStyles();">
           </div>
         </div>
         <button onclick="closeAudioPairingPanel()">Close</button>

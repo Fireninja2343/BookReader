@@ -442,6 +442,7 @@ function saveAndApplyUserStyles() {
     document.getElementById("lbl-paragraph-spacing").innerText = paragraphSpacing;
     document.getElementById("lbl-scroll-speed").innerText = scrollSpeed;
     document.getElementById("setting-group-ordered-sorting").checked = groupOrderedSorting;
+    document.getElementById("lbl-speed").innerText = audioSpeed;
     document.getElementById("lbl-volume").innerText = audioVolume;
 
     const frame = document.getElementById("text-render-frame");
