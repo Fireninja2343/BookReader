@@ -167,6 +167,13 @@ function extractQuickTimeChapters(mp4boxFile, info, result) {
 */
 function extractMoovMetadata(mp4boxFile, result) {
   try {
+    // TEMPORARY: dump the raw udta/meta tree so we can see the actual shape
+    // mp4box produces for this file and fix the atom-key assumptions below.
+    // Remove once title/author/cover extraction is confirmed working.
+    console.log("[22-audio-parser DEBUG] moov.udta:", mp4boxFile.moov?.udta);
+    console.log("[22-audio-parser DEBUG] moov.udta.meta:", mp4boxFile.moov?.udta?.meta);
+    console.log("[22-audio-parser DEBUG] moov.udta.meta.ilst:", mp4boxFile.moov?.udta?.meta?.ilst);
+
     const ilst = mp4boxFile.moov?.udta?.meta?.ilst;
     if (!ilst) return;
 
