@@ -1,13 +1,13 @@
 const Config = {
   Db: {
-    DB_NAME: "LocalEpubReaderDB_v2",
+    DB_NAME: "LocalBookReaderDB_v1",
     STORE_BOOKS: "books",
     STORE_GROUPS: "groups",
     STORE_NOTES: "notes",
     STORE_NOTE_GROUPS: "noteGroups",
-    COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY: "EpubReader_CollapsedNoteTagKeys_v1",
-    LAST_NOTE_TAGS_STORAGE_KEY: "EpubReader_LastNoteTagIds_v1",
-    USER_CONFIG_STORAGE_KEY: "EpubReader_UserConfig_v1",
+    COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY: "BookReader_CollapsedNoteTagKeys_v1",
+    LAST_NOTE_TAGS_STORAGE_KEY: "BookReader_LastNoteTagIds_v1",
+    USER_CONFIG_STORAGE_KEY: "BookReader_UserConfig_v1",
   },
   AutoScroller: {
     AUTOSCROLL_DEBUG: false,
@@ -17,6 +17,8 @@ const Config = {
     TARGET_WORDS_PER_TICK: 50,
   },
   Sync: {
+    // Master kill switch for all Firebase reads/writes, SET TO TRUE for sync to work.
+    SYNC_ACTIVE: false,
     FILE_CHUNK_SIZE: 700000,
     CLOUD_PROGRESS_PUSH_INTERVAL_MS: 30000,
     IDLE_THRESHOLD_MS: 20000,
@@ -81,7 +83,7 @@ const Config = {
     MIN_CHAPTER_TICK_GAP_PX: 4,
   },
   Timelines: {
-    GANTT_SCROLL_PX_PER_DAY: 48,
+    GANTT_SCROLL_PX_PER_DAY: 32,
     HEATMAP_MAX_WEEKS : 106,
     HEATMAP_MIN_WEEKS : 8,
     HEATMAP_CELL_PX : 12,
@@ -92,14 +94,15 @@ const Config = {
   },
   VersionBadge: {
     REPO_OWNER: "Fireninja2343",
-    REPO_NAME: "EpubReader",
-    REPO_BRANCH: "Notes&Firebase-sync",
+    REPO_NAME: "BookReader",
+    REPO_BRANCH: "AudioBooks",
     // 1.0 - First Release
     // 1.1 - Firebase Sync
     // 1.2 - Notes
-    // 1.3+ - Future
-    MAJOR_MINOR: "1.2",
-    CACHE_KEY: "EpubReader_VersionBadgeCache_v1",
+    // 1.3 - Audio Books
+    // 1.4+ - Future
+    MAJOR_MINOR: "1.3",
+    CACHE_KEY: "BookReader_VersionBadgeCache_v1",
     AUTO_REFRESH_MS: 15 * 60 * 1000,
     CACHE_TTL_MS: 5 * 60 * 1000,
     MANUAL_REFRESH_COOLDOWN: 10 * 1000,

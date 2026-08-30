@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>EPUB Reader</title>
+    <title>Book Reader</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icons/favicon.ico">
     <link rel="stylesheet" href="Styles/00-base.css" />
@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="Styles/05-responsive.css" />
     <link rel="stylesheet" href="Styles/06-danger-zone.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
 
     <!-- Firebase (compat build, matches the plain-script style of the rest of the app) -->
     <!-- Only Auth + Firestore are needed — no Storage — so this stays on the free Spark plan -->
@@ -44,6 +45,8 @@
     <script src="Scripts/19-danger-zone.js" defer></script>
     <script src="Scripts/20-soft-sync.js" defer></script>
     <script src="Scripts/21-version-badge.js" defer></script>
+    <script src="Scripts/22-audio-parser.js" defer></script>
+    <script src="Scripts/23-audio-player.js" defer></script>
 </head>
 
 <body>
@@ -101,6 +104,21 @@
             </select>
         </div>
     </header> 
+    <!--
+     TEMPORARY debug harness for Phase 0 of audiobook sync (22-audio-parser.js /
+     23-audio-player.js). No pairing, no persistence - just lets you pick an M4B,
+     see extracted chapters/metadata, and play it with basic transport. Delete
+     this block once the real pairing UI (later phase) replaces it.
+    -->
+    <div id="audio-debug-panel" style="padding: 12px; border: 2px dashed orange; margin: 12px;">
+        <strong>🔧 Audio Debug (temporary)</strong><br>
+        <input type="file" id="audio-debug-file-input" accept=".m4b,.m4a,audio/*" onchange="handleAudioDebugFileSelect(event)">
+        <button onclick="audioDebugPlay()">▶ Play</button>
+        <button onclick="audioDebugPause()">⏸ Pause</button>
+        <button onclick="audioDebugSeek()">⏩ Seek to (s):</button>
+        <input type="number" id="audio-debug-seek-input" style="width: 70px;" value="0">
+        <pre id="audio-debug-output" style="white-space: pre-wrap; background: #111; color: #0f0; padding: 8px; max-height: 300px; overflow: auto;"></pre>
+    </div>
     <div id="stats-view" class="view-panel">
         <div class="flex-between">
             <h2>📊 Global Reading Analytics</h2>

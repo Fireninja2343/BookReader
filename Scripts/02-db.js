@@ -1,7 +1,35 @@
 // -----------------------------------------------------------------
 // DATABASE MANAGEMENT
 // -----------------------------------------------------------------
+/**
+ One-time migration for the localStorage keys renamed alongside the 1.3
+ Audio Books branch's DB_NAME rename (EpubReader_* -> BookReader_*). Unlike
+ the IndexedDB rename, these don't need a hard-pull recovery path - it's a
+ straight copy under the new key, left in place (not deleted) under the old
+ key in case anything still expects it this session.
+
+ Old/new pairs are read directly from the literal old strings rather than
+ Config, since Config now only knows the new names - there'd be nothing to
+ compare against otherwise.
+*/
+function migrateLegacyStorageKeys() {
+  const renames = [
+    ["EpubReader_CollapsedNoteTagKeys_v1", Config.Db.COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY],
+    ["EpubReader_LastNoteTagIds_v1", Config.Db.LAST_NOTE_TAGS_STORAGE_KEY],
+    ["EpubReader_UserConfig_v1", Config.Db.USER_CONFIG_STORAGE_KEY],
+  ];
+  for (const [oldKey, newKey] of renames) {
+    const oldValue = localStorage.getItem(oldKey);
+    const newValue = localStorage.getItem(newKey);
+    if (oldValue !== null && newValue === null) {
+      localStorage.setItem(newKey, oldValue);
+      console.log(`[02-db] Migrated localStorage key ${oldKey} -> ${newKey}`);
+    }
+  }
+}
+
 function initIndexedDB() {
+  migrateLegacyStorageKeys();
   const request = indexedDB.open(DB_NAME, 2);
   request.onupgradeneeded = (e) => {
     const database = e.target.result;

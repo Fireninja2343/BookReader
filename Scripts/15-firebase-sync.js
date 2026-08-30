@@ -95,6 +95,10 @@ fbAuth.onAuthStateChanged((user) => {
   updateSyncUI();
 
   if (user) {
+    if (!Config.Sync.SYNC_ACTIVE) {
+      console.log("[FirebaseSync] sync disabled (Config.Sync.SYNC_ACTIVE=false) - skipped pull/listener setup");
+      return;
+    }
     if (syncedUid === user.uid) {
       console.log("[FirebaseSync] onAuthStateChanged fired again for the same user — skipping re-sync");
       return;
@@ -164,6 +168,10 @@ const PUSH_RETRY_QUEUE_DRAIN_INTERVAL_MS = Config.Sync.PUSH_RETRY_QUEUE_DRAIN_IN
   Never throws - returns true on success, false if it had to be queued.
  */
 async function withPushRetry(label, attemptFn) {
+  if (!Config.Sync.SYNC_ACTIVE) {
+    console.log(`[FirebaseSync] sync disabled (Config.Sync.SYNC_ACTIVE=false) - skipped push: ${label}`);
+    return false;
+  }
   for (let attempt = 0; attempt <= PUSH_RETRY_IMMEDIATE_ATTEMPTS; attempt++) {
     try {
       await attemptFn();
