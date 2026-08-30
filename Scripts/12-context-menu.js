@@ -336,6 +336,9 @@ function triggerContextAction(actionKey) {
         case "editRawData":
             openEditRawDataModal(targetBookObj);
             break;
+        case "pairAudiobook":
+            openAudioPairingPanel(targetBookObj.id);
+            break;
         case "metadata":
         case "stats":
             openBookDiagnosticsModal(targetBookObj, actionKey);
