@@ -81,7 +81,7 @@ const Config = {
     MIN_CHAPTER_TICK_GAP_PX: 4,
   },
   Timelines: {
-    GANTT_SCROLL_PX_PER_DAY: 48,
+    GANTT_SCROLL_PX_PER_DAY: 32,
     HEATMAP_MAX_WEEKS : 106,
     HEATMAP_MIN_WEEKS : 8,
     HEATMAP_CELL_PX : 12,
