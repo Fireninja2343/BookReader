@@ -414,6 +414,9 @@ function saveAndApplyUserStyles() {
     const color = document.getElementById("setting-font-color").value;
     const scrollSpeed = document.getElementById("setting-scroll-delay").value;
     const cardSize = document.getElementById("setting-card-size")?.value || "160";
+    const groupOrderedSorting = document.getElementById("setting-group-ordered-sorting")?.checked || false;
+    const audioSpeed = document.getElementById("audio-pairing-speed-input")?.value || "1";
+    const audioVolume = document.getElementById("audio-pairing-volume-input")?.value || "0.5";
 
     // Merges into whatever config is already saved (rather than replacing it outright),
     // so unrelated saved settings - like cardSize or the hiddenReaderButtons toggles
@@ -427,7 +430,10 @@ function saveAndApplyUserStyles() {
         colorOverrideEnabled: colorOverrideEnabled,
         fontColor: color,
         scrollSpeed: scrollSpeed,
-        cardSize: cardSize
+        cardSize: cardSize,
+        groupOrderedSorting: groupOrderedSorting,
+        audioSpeed: audioSpeed,
+        audioVolume: audioVolume
     });
 
     document.getElementById("lbl-font-size").innerText = size;
@@ -435,6 +441,8 @@ function saveAndApplyUserStyles() {
     document.getElementById("lbl-margins").innerText = margin;
     document.getElementById("lbl-paragraph-spacing").innerText = paragraphSpacing;
     document.getElementById("lbl-scroll-speed").innerText = scrollSpeed;
+    document.getElementById("setting-group-ordered-sorting").checked = groupOrderedSorting;
+    document.getElementById("lbl-volume").innerText = audioVolume;
 
     const frame = document.getElementById("text-render-frame");
     const container = document.getElementById("reader-container");
