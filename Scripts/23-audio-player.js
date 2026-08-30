@@ -94,6 +94,14 @@ function setAudioSpeed(rate) {
 }
 
 /**
+ Sets volume on the currently loaded audio.
+  @param {number} volume - Volume level from 0.0 (silent) to 1.0 (full).
+*/
+function setAudioVolume(volume) {
+  if (!activeAudioElement) return;
+  activeAudioElement.volume = Math.min(Math.max(volume, 0), 1);
+}
+/**
  Releases the currently loaded audio element and its object URL. Call when
  leaving the audio player context entirely (not for pause - see the
  IDEA doc: stopping playback is the intended way to end auto-scroll,
