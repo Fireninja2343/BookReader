@@ -71,6 +71,20 @@ function seekAudio(seconds) {
 }
 
 /**
+ Seeks to the start of a given chapter. Same mechanism as seekAudio() -
+ look up the chapter's start time, seek there - just resolved from a
+ chapters array instead of a raw second value handed in directly.
+
+ @param {Array<{title: string, startSec: number, endSec: number}>} chapters - Chapter list, e.g. from a paired audiobook's stored metadata.
+ @param {number} chapterIndex - 0-indexed chapter to jump to.
+*/
+function seekToChapter(chapters, chapterIndex) {
+  const chapter = chapters?.[chapterIndex];
+  if (!chapter) return;
+  seekAudio(chapter.startSec);
+}
+
+/**
  Sets playback speed on the currently loaded audio.
  @param {number} rate - Playback rate multiplier (e.g. 1.0, 1.5, 2.0).
 */

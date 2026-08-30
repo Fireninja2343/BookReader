@@ -20,25 +20,20 @@ const supportsFileHandles = typeof window.showOpenFilePicker === "function";
    the user cancels the picker.
 */
 async function pickAudioFile() {
-  console.log("[24-audio-pairing DEBUG] supportsFileHandles:", supportsFileHandles);
   if (supportsFileHandles) {
     try {
       const [handle] = await window.showOpenFilePicker({
         types: [{ description: "Audiobook", accept: { "audio/mp4": [".m4b", ".m4a"] } }],
       });
-      console.log("[24-audio-pairing DEBUG] picker returned handle:", handle);
       const file = await handle.getFile();
-      console.log("[24-audio-pairing DEBUG] resolved file from handle:", file);
       return { file, handle };
     } catch (err) {
       // AbortError = user cancelled the picker; not a real failure.
-      console.log("[24-audio-pairing DEBUG] showOpenFilePicker threw:", err.name, err.message);
       if (err.name !== "AbortError") console.warn("[24-audio-pairing] File picker failed:", err);
       return null;
     }
   }
 
-  console.log("[24-audio-pairing DEBUG] falling back to plain <input> - no handle will be available");
   // Fallback for browsers without showOpenFilePicker: a hidden plain input.
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -199,6 +194,12 @@ async function openAudioPairingPanel(bookId) {
   const statusEl = document.getElementById("audio-pairing-status");
   panel.style.display = "flex";
 
+  // Reset transport visibility unless audio is already loaded (e.g. reopening
+  // the panel mid-listen). Simple presence check - Phase 1 doesn't track
+  // which book's audio is loaded, just whether anything is.
+  document.getElementById("audio-pairing-transport").style.display =
+    activeAudioElement ? "flex" : "none";
+
   const existing = await getAudiobookForBook(bookId);
   statusEl.textContent = existing
     ? `Paired: ${existing.title ?? existing.lastPickedFileName ?? "(untitled)"}`
@@ -218,13 +219,14 @@ function closeAudioPairingPanel() {
 async function handlePairAudiobookClick() {
   if (audioPairingTargetBookId == null) return;
   const picked = await pickAudioFile();
-  console.log("[24-audio-pairing DEBUG] handlePairAudiobookClick picked:", picked, "handle present?", !!picked?.handle);
   if (!picked) return;
 
   const existing = await getAudiobookForBook(audioPairingTargetBookId);
   if (!existing) {
     const metadata = await pairAudiobookFile(audioPairingTargetBookId, picked.file, picked.handle);
     document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
+    loadM4bAudio(picked.file);
+    document.getElementById("audio-pairing-transport").style.display = "flex";
     return;
   }
 
@@ -232,6 +234,8 @@ async function handlePairAudiobookClick() {
   if (mismatches.length === 0) {
     const metadata = await pairAudiobookFile(audioPairingTargetBookId, picked.file, picked.handle);
     document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
+    loadM4bAudio(picked.file);
+    document.getElementById("audio-pairing-transport").style.display = "flex";
   } else {
     showMismatchTable(mismatches, picked);
   }
@@ -254,8 +258,8 @@ async function handleResumeListeningClick() {
   const { mismatches } = await verifyAudioFileAgainstStored(resumed.bookId, resumed.file);
   if (mismatches.length === 0) {
     document.getElementById("audio-pairing-status").textContent = "Resumed, metadata matches.";
-    // Playback wiring (loadM4bAudio, etc.) lands in a later phase - Phase 1
-    // only proves the file is reachable and metadata-consistent.
+    loadM4bAudio(resumed.file);
+    document.getElementById("audio-pairing-transport").style.display = "flex";
   } else {
     showMismatchTable(mismatches, { file: resumed.file, handle: null });
   }
