@@ -165,25 +165,64 @@ function extractQuickTimeChapters(mp4boxFile, info, result) {
  @param {MP4Box} mp4boxFile - Parsed mp4box file instance.
  @param {Object} result - Result object being built by extractM4bMetadata(); mutated in place.
 */
+/**
+ mp4box doesn't parse ilst's child atoms (title/author/cover) into objects -
+ it leaves them as a raw byte blob on ilst.data (confirmed via testing: the
+ box comes back with has_unparsed_data: true). This walks that blob by hand.
+
+ Each entry is: [4-byte size][4-byte type, e.g. "\xa9nam"][nested "data" atom:
+ 4-byte size]["data"][4-byte type flag][4-byte locale][payload bytes]. Text
+ entries decode as UTF-8; the cover entry ("covr") is raw image bytes.
+
+ @param {Uint8Array} bytes - Raw bytes from the ilst box's .data property.
+ @returns {Object<string, Uint8Array>} Map of 4-char atom type (e.g. "©nam") to its raw payload bytes.
+*/
+function parseIlstEntries(bytes) {
+  const entries = {};
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+
+  while (offset + 8 <= bytes.length) {
+    const entrySize = view.getUint32(offset);
+    if (entrySize < 8 || offset + entrySize > bytes.length) break;
+    const entryType = new TextDecoder().decode(bytes.slice(offset + 4, offset + 8));
+
+    // Nested "data" atom starts right after the entry's own 8-byte header.
+    const dataAtomOffset = offset + 8;
+    if (dataAtomOffset + 16 <= offset + entrySize) {
+      const dataSize = view.getUint32(dataAtomOffset);
+      const dataType = new TextDecoder().decode(bytes.slice(dataAtomOffset + 4, dataAtomOffset + 8));
+      if (dataType === "data" && dataAtomOffset + dataSize <= offset + entrySize) {
+        // Payload starts after: 4-byte size + "data" + 4-byte type flag + 4-byte locale.
+        const payloadStart = dataAtomOffset + 16;
+        const payloadEnd = dataAtomOffset + dataSize;
+        entries[entryType] = bytes.slice(payloadStart, payloadEnd);
+      }
+    }
+
+    offset += entrySize;
+  }
+
+  return entries;
+}
+
 function extractMoovMetadata(mp4boxFile, result) {
   try {
-    // TEMPORARY: dump the raw udta/meta tree so we can see the actual shape
-    // mp4box produces for this file and fix the atom-key assumptions below.
-    // Remove once title/author/cover extraction is confirmed working.
-    console.log("[22-audio-parser DEBUG] moov.udta:", mp4boxFile.moov?.udta);
-    console.log("[22-audio-parser DEBUG] moov.udta.meta:", mp4boxFile.moov?.udta?.meta);
-    console.log("[22-audio-parser DEBUG] moov.udta.meta.ilst:", mp4boxFile.moov?.udta?.meta?.ilst);
-
     const ilst = mp4boxFile.moov?.udta?.meta?.ilst;
-    if (!ilst) return;
+    if (!ilst || !ilst.data) return;
 
-    result.title = ilst["©nam"]?.data?.[0]?.value ?? null;
-    result.author = ilst["©ART"]?.data?.[0]?.value ?? ilst.aART?.data?.[0]?.value ?? null;
+    const entries = parseIlstEntries(ilst.data);
+    const decoder = new TextDecoder();
 
-    const coverData = ilst.covr?.data?.[0];
-    if (coverData?.data) {
-      const mime = coverData.type === 14 ? "image/png" : "image/jpeg";
-      const base64 = arrayBufferToBase64(coverData.data);
+    if (entries["\u00a9nam"]) result.title = decoder.decode(entries["\u00a9nam"]);
+    if (entries["\u00a9ART"]) result.author = decoder.decode(entries["\u00a9ART"]);
+    else if (entries.aART) result.author = decoder.decode(entries.aART);
+
+    if (entries.covr) {
+      // First two bytes of a JPEG are 0xFFD8; PNG starts 0x89 0x50 ("\x89P").
+      const isPng = entries.covr[0] === 0x89 && entries.covr[1] === 0x50;
+      const mime = isPng ? "image/png" : "image/jpeg";
+      const base64 = arrayBufferToBase64(entries.covr);
       result.coverArt = `data:${mime};base64,${base64}`;
     }
   } catch (err) {
