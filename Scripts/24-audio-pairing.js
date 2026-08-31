@@ -25,9 +25,7 @@ async function pickAudioFile() {
       const [handle] = await window.showOpenFilePicker({
         types: [{ description: "Audiobook", accept: { "audio/mp4": [".m4b", ".m4a"] } }],
       });
-      console.log("[24-audio-pairing DEBUG] picker returned handle:", handle);
       const file = await handle.getFile();
-      console.log("[24-audio-pairing DEBUG] resolved file from handle:", file);
       return { file, handle };
     } catch (err) {
       // AbortError = user cancelled the picker; not a real failure.
@@ -36,7 +34,7 @@ async function pickAudioFile() {
     }
   }
 
-  console.log("[24-audio-pairing DEBUG] falling back to plain <input> - no handle will be available");
+  console.log("[24-audio-pairing] falling back to plain <input> - no handle will be available");
   // Fallback for browsers without showOpenFilePicker: a hidden plain input.
   return new Promise((resolve) => {
     const input = document.createElement("input");

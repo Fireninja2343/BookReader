@@ -1,7 +1,7 @@
 const Config = {
   Db: {
     DB_NAME: "LocalBookReaderDB_v1",
-    DB_VERSION: 1,
+    DB_VERSION: 2,
     STORE_BOOKS: "books",
     STORE_GROUPS: "groups",
     STORE_NOTES: "notes",
