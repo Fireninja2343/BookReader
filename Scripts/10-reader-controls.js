@@ -262,6 +262,19 @@ function trackReadingProgress() {
                 if (typeof persistHistorySegment === "function") persistHistorySegment();
             }
         }
+        // Mirrors this position into the shared audio-sync store, but only for
+        // audio-paired books - activeBookAudioPairingCache (24-audio-pairing.js)
+        // is checked first so unpaired books (the common case) skip this
+        // entirely rather than writing to a store they'll never read from.
+        if (typeof activeBookAudioPairingCache !== "undefined"
+            && activeBookAudioPairingCache === activeBookObject.id
+            && typeof updateAudioSyncPosition === "function") {
+            updateAudioSyncPosition(activeBookObject.id, {
+                chapterIndex: activeSpinePointer,
+                percentInChapter: innerPct,
+                lastMode: "reading",
+            });
+        }
     }
 }
 /*

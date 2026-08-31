@@ -76,6 +76,12 @@ async function launchEpubReader(bookObject) {
       if (typeof maybePromptSyncReadingToAudio === "function") {
         maybePromptSyncReadingToAudio(bookObject.id);
       }
+      // Caches whether this book is audio-paired, so trackReadingProgress()
+      // (fired on every scroll event) can skip the position write for
+      // unpaired books without an async DB call on every tick.
+      if (typeof refreshActiveBookAudioPairingCache === "function") {
+        refreshActiveBookAudioPairingCache(bookObject.id);
+      }
     }, 200);
   } catch (err) {
     console.error(err);

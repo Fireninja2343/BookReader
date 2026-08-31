@@ -122,21 +122,21 @@
         <div id="audio-pairing-transport" style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
           <div>
             <button onclick="playAudio()">▶ Play</button>
-            <button onclick="pauseAudio()">⏸ Pause</button>
-            <button onclick="seekAudio(activeAudioElement.currentTime - 10)">⏪ -10s</button>
-            <button onclick="seekAudio(activeAudioElement.currentTime + 10)">⏩ +10s</button>
+            <button onclick="pauseAudio(); recordListeningPosition(audioPairingTargetBookId)">⏸ Pause</button>
+            <button onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(audioPairingTargetBookId)">⏪ -10s</button>
+            <button onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(audioPairingTargetBookId)">⏩ +10s</button>
           </div>
           <div>
             <label>Jump to (s):</label>
             <input type="number" id="audio-pairing-seek-input" style="width: 80px;">
-            <button onclick="seekAudio(Number(document.getElementById('audio-pairing-seek-input').value))">Go</button>
+            <button onclick="seekAudio(Number(document.getElementById('audio-pairing-seek-input').value)); recordListeningPosition(audioPairingTargetBookId)">Go</button>
           </div>
           <div>
             <label>Go to chapter:</label>
             <input type="number" id="audio-pairing-chapter-input" style="width: 60px;" min="1">
             <button 
                 onclick="getAudiobookForBook(audioPairingTargetBookId).then(a => 
-                seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1))">
+                seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1)).then(() => recordListeningPosition(audioPairingTargetBookId))">
                 Go
             </button>
           </div>

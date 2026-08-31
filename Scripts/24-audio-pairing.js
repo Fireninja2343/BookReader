@@ -228,6 +228,7 @@ async function handlePairAudiobookClick() {
     document.getElementById("audio-pairing-transport").style.display = "flex";
     openCalibrationModal(audioPairingTargetBookId);
     maybePromptSyncAudioToReading(audioPairingTargetBookId);
+    refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
     return;
   }
 
@@ -239,6 +240,7 @@ async function handlePairAudiobookClick() {
     document.getElementById("audio-pairing-transport").style.display = "flex";
     openCalibrationModal(audioPairingTargetBookId);
     maybePromptSyncAudioToReading(audioPairingTargetBookId);
+    refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
   } else {
     showMismatchTable(mismatches, picked);
   }
@@ -310,6 +312,7 @@ async function handleMismatchContinue() {
   closeMismatchModal();
   openCalibrationModal(audioPairingTargetBookId);
   maybePromptSyncAudioToReading(audioPairingTargetBookId);
+    refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
 }
 
 /** "Choose Different File" - discards this pick, re-opens the file picker. */
@@ -523,4 +526,67 @@ async function submitCalibration() {
   const offset = calibrationSelectedEpubIndex - calibrationSelectedAudioIndex;
   await setAudiobookChapterOffset(calibrationTargetBookId, offset);
   closeCalibrationModal();
+}
+
+// -----------------------------------------------------------------
+// LISTENING POSITION SNAPSHOT
+// -----------------------------------------------------------------
+/*
+ Writes a listening-side position into STORE_AUDIO_SYNC_POSITION, the same
+ store trackReadingProgress() (10-reader-controls.js) writes the reading
+ side into - see updateAudioSyncPosition() (02-db.js). Without this, the
+ mode-switch prompts have nothing to ever compare against, since the store
+ stays permanently empty.
+
+ Phase 2 scope only: a snapshot taken on pause/seek, not continuous tracking
+ (that's Phase 3's live sync loop, which will replace/extend this with a
+ write on every tick instead of only these discrete moments).
+*/
+
+/**
+ Snapshots the current audio position for a paired book. Silently does
+ nothing if the book isn't paired or nothing is loaded - callers don't need
+ to check first.
+ @param {number} bookId - id of the book whose audio position to record.
+*/
+async function recordListeningPosition(bookId) {
+  if (bookId == null || !activeAudioElement) return;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+
+  const chapterPos = secondsToChapterPosition(audiobook.chapters, activeAudioElement.currentTime);
+  if (!chapterPos) return;
+
+  await updateAudioSyncPosition(bookId, {
+    chapterIndex: chapterPos.audioChapterIndex,
+    percentInChapter: chapterPos.percentInChapter,
+    lastMode: "listening",
+  });
+}
+
+// -----------------------------------------------------------------
+// ACTIVE BOOK PAIRING CACHE
+// -----------------------------------------------------------------
+/*
+ In-memory only (never persisted) - lets trackReadingProgress()
+ (10-reader-controls.js), which fires on every scroll event, skip the
+ STORE_AUDIO_SYNC_POSITION write for unpaired books without an async DB
+ read on every tick. No second source of truth to keep in sync: this is
+ just a cache of what STORE_AUDIOBOOKS already says, refreshed whenever a
+ book opens or its pairing changes, never written to independently.
+*/
+
+/** bookId of the currently open book if it's audio-paired, else null. Read by trackReadingProgress(). */
+let activeBookAudioPairingCache = null;
+
+/**
+ Refreshes the cache for the book currently open in the reader. Call
+ whenever a book opens (launchEpubReader()) or whenever pairing state for
+ the active book might have changed (after a fresh pair, mismatch-continue,
+ or resume - anywhere pairAudiobookFile() runs for the active book).
+ @param {number} bookId - id of the book to check.
+*/
+async function refreshActiveBookAudioPairingCache(bookId) {
+  const audiobook = await getAudiobookForBook(bookId);
+  activeBookAudioPairingCache = audiobook ? bookId : null;
 }
