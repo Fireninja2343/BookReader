@@ -7,6 +7,9 @@ const Config = {
     STORE_NOTES: "notes",
     STORE_NOTE_GROUPS: "noteGroups",
     STORE_AUDIOBOOKS: "audiobooks",
+    // Local-only companion to STORE_AUDIOBOOKS: fileHandle + lastPickedFileName.
+    // Split into its own store so it's structurally excluded from whatever pushes STORE_AUDIOBOOKS to Firebase
+    STORE_AUDIO_LOCAL: "audioLocal",
     STORE_AUDIO_SYNC_POSITION: "audioSyncPosition",
     STORE_LAST_AUDIO_CONTEXT: "lastAudioContext",
     COLLAPSED_NOTE_TAG_KEYS_STORAGE_KEY: "BookReader_CollapsedNoteTagKeys_v1",

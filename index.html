@@ -48,6 +48,8 @@
     <script src="Scripts/22-audio-parser.js" defer></script>
     <script src="Scripts/23-audio-player.js" defer></script>
     <script src="Scripts/24-audio-pairing.js" defer></script>
+    <script src="Scripts/25-audio-sync.js" defer></script>
+    <script src="Scripts/26-auto-scroll.js" defer></script>
 </head>
 
 <body>
@@ -80,6 +82,7 @@
             <button id="btn-next-chapter" onclick="stepToNextChapter()" >Next Chapter ⏭️</button>
             <button id="pause-tracking" onclick="pauseActiveReadingTimer()" style="display:inline-block;">Pause ⏱️ Tracking</button>
             <button id="unpause-tracking" onclick="pauseActiveReadingTimer(false)" style="display:none;">Unpause ⏱️ Tracking</button>
+            <button id="btn-sync-reading-audio" onclick="toggleReadingAudioSync()">🔗 Sync Reading to Audio</button>
         </div>
             <button id="btn-global-stats" onclick="showStatsViewState()">📊 Stats</button>
             <button id="btn-global-notes" onclick="showNotesViewState()">🗒️ Notes</button>
@@ -113,6 +116,7 @@
         <p id="audio-pairing-status">No audiobook paired yet.</p>
         <button onclick="handlePairAudiobookClick()">📂 Pick M4B File</button>
         <button onclick="handleResumeListeningClick(); saveAndApplyUserStyles()">▶ Resume Listening</button>
+        <button onclick="openCalibrationModal(audioPairingTargetBookId)">🎯 Calibrate Chapters</button>
         <!-- Simple Phase 1 transport, reused/carried forward from Phase 0's
              debug harness. Dedicated playback UI is Phase 6 polish. -->
         <div id="audio-pairing-transport" style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
@@ -161,6 +165,25 @@
         <button onclick="closeMismatchModal()">Cancel</button>
         <button onclick="handleMismatchContinue()">Continue</button>
         <button onclick="handleMismatchChooseDifferent()">Choose Different File</button>
+      </div>
+    </div>
+    <div id="audio-calibration-modal" class="custom-modal" style="display: none;" onclick="if (event.target === this) closeCalibrationModal();">
+      <div class="modal-box">
+        <h3>Calibrate Chapters</h3>
+        <p>Pick the EPUB chapter and the audio chapter that both start the same part of the book.</p>
+        <div style="display: flex; gap: 16px;">
+          <div style="flex: 1;">
+            <strong>EPUB Chapters</strong>
+            <div id="calibration-epub-list" style="max-height: 300px; overflow-y: auto;"></div>
+          </div>
+          <div style="flex: 1;">
+            <strong>Audio Chapters</strong>
+            <div id="calibration-audio-list" style="max-height: 300px; overflow-y: auto;"></div>
+          </div>
+        </div>
+        <p id="calibration-status">Select one chapter from each side.</p>
+        <button onclick="closeCalibrationModal()">Cancel</button>
+        <button onclick="submitCalibration()">Save Calibration</button>
       </div>
     </div>
     <div id="stats-view" class="view-panel">

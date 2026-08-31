@@ -25,7 +25,9 @@ async function pickAudioFile() {
       const [handle] = await window.showOpenFilePicker({
         types: [{ description: "Audiobook", accept: { "audio/mp4": [".m4b", ".m4a"] } }],
       });
+      console.log("[24-audio-pairing DEBUG] picker returned handle:", handle);
       const file = await handle.getFile();
+      console.log("[24-audio-pairing DEBUG] resolved file from handle:", file);
       return { file, handle };
     } catch (err) {
       // AbortError = user cancelled the picker; not a real failure.
@@ -34,6 +36,7 @@ async function pickAudioFile() {
     }
   }
 
+  console.log("[24-audio-pairing DEBUG] falling back to plain <input> - no handle will be available");
   // Fallback for browsers without showOpenFilePicker: a hidden plain input.
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -194,9 +197,7 @@ async function openAudioPairingPanel(bookId) {
   const statusEl = document.getElementById("audio-pairing-status");
   panel.style.display = "flex";
 
-  // Reset transport visibility unless audio is already loaded (e.g. reopening
-  // the panel mid-listen). Simple presence check - Phase 1 doesn't track
-  // which book's audio is loaded, just whether anything is.
+  // Reset transport visibility unless audio is already loaded (e.g. reopening the panel mid-listen).
   document.getElementById("audio-pairing-transport").style.display =
     activeAudioElement ? "flex" : "none";
 
@@ -227,6 +228,8 @@ async function handlePairAudiobookClick() {
     document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
     loadM4bAudio(picked.file);
     document.getElementById("audio-pairing-transport").style.display = "flex";
+    openCalibrationModal(audioPairingTargetBookId);
+    maybePromptSyncAudioToReading(audioPairingTargetBookId);
     return;
   }
 
@@ -236,6 +239,8 @@ async function handlePairAudiobookClick() {
     document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
     loadM4bAudio(picked.file);
     document.getElementById("audio-pairing-transport").style.display = "flex";
+    openCalibrationModal(audioPairingTargetBookId);
+    maybePromptSyncAudioToReading(audioPairingTargetBookId);
   } else {
     showMismatchTable(mismatches, picked);
   }
@@ -260,6 +265,7 @@ async function handleResumeListeningClick() {
     document.getElementById("audio-pairing-status").textContent = "Resumed, metadata matches.";
     loadM4bAudio(resumed.file);
     document.getElementById("audio-pairing-transport").style.display = "flex";
+    maybePromptSyncAudioToReading(resumed.bookId);
   } else {
     showMismatchTable(mismatches, { file: resumed.file, handle: null });
   }
@@ -304,10 +310,219 @@ async function handleMismatchContinue() {
   );
   document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? pendingMismatchFile.file.name}`;
   closeMismatchModal();
+  openCalibrationModal(audioPairingTargetBookId);
+  maybePromptSyncAudioToReading(audioPairingTargetBookId);
 }
 
 /** "Choose Different File" - discards this pick, re-opens the file picker. */
 async function handleMismatchChooseDifferent() {
   closeMismatchModal();
   await handlePairAudiobookClick();
+}
+
+// -----------------------------------------------------------------
+// POSITION MAPPING (EPUB spine <-> audio chapter)
+// -----------------------------------------------------------------
+/*
+ Pure functions, no DOM/DB access - easy to reason about and reuse from both
+ the live sync loop (audio -> scroll) and trackReadingProgress() (scroll ->
+ audio position write). EPUB and M4B chapters are assumed to correspond via
+ a single constant integer offset, set by chapter calibration: EPUB spine
+ index N corresponds to audio chapter (N - chapterOffset). This is the
+ "roughly line up" assumption from the original design doc - not a full
+ per-chapter manual mapping.
+
+ percentInChapter means the same thing on both sides: how far through the
+ *current* chapter, 0-1. For EPUB this is exactly innerPct as already
+ computed by trackReadingProgress() (10-reader-controls.js); for audio it's
+ (currentTime - chapterStartSec) / (chapterEndSec - chapterStartSec).
+*/
+
+/**
+ Converts an audio chapter position into the corresponding EPUB spine
+ position.
+
+ @param {number} chapterOffset - epubSpineIndex - audioChapterIndex, from calibration.
+ @param {number} audioChapterIndex - 0-indexed chapter in the M4B's chapters array.
+ @param {number} percentInChapter - 0-1, how far through that audio chapter.
+ @returns {{epubSpineIndex: number, innerPct: number}}
+*/
+function mapChapterToScroll(chapterOffset, audioChapterIndex, percentInChapter) {
+  return {
+    epubSpineIndex: audioChapterIndex + chapterOffset,
+    innerPct: Math.min(1, Math.max(0, percentInChapter)),
+  };
+}
+
+/**
+ Converts an EPUB spine position into the corresponding audio chapter
+ position. Inverse of mapChapterToScroll().
+
+ @param {number} chapterOffset - epubSpineIndex - audioChapterIndex, from calibration.
+ @param {number} epubSpineIndex - 0-indexed chapter in activeSpineArray.
+ @param {number} innerPct - 0-1, how far through that EPUB chapter (i.e. innerPct
+   as already computed by trackReadingProgress()).
+ @returns {{audioChapterIndex: number, percentInChapter: number}}
+*/
+function mapScrollToChapter(chapterOffset, epubSpineIndex, innerPct) {
+  return {
+    audioChapterIndex: epubSpineIndex - chapterOffset,
+    percentInChapter: Math.min(1, Math.max(0, innerPct)),
+  };
+}
+
+/**
+ Resolves an audio chapter position to an absolute seek time in seconds,
+ using the audiobook's actual chapter boundaries (not just the offset math -
+ this is where percentInChapter gets multiplied out against a real chapter's
+ duration).
+
+ @param {Array<{startSec: number, endSec: number}>} chapters - Audiobook chapters array.
+ @param {number} audioChapterIndex - 0-indexed chapter to resolve.
+ @param {number} percentInChapter - 0-1, how far through that chapter.
+ @returns {number|null} Absolute seconds to seek to, or null if audioChapterIndex is out of range.
+*/
+function chapterPositionToSeconds(chapters, audioChapterIndex, percentInChapter) {
+  const chapter = chapters?.[audioChapterIndex];
+  if (!chapter) return null;
+  const duration = chapter.endSec - chapter.startSec;
+  return chapter.startSec + percentInChapter * duration;
+}
+
+/**
+ Resolves an absolute audio playback time to its chapter index + percent
+ within that chapter. Inverse of chapterPositionToSeconds(). Scans linearly -
+ chapter counts are small (tens, not thousands), so this is cheap enough to
+ call on every sync-loop tick without needing a smarter lookup.
+
+ @param {Array<{startSec: number, endSec: number}>} chapters - Audiobook chapters array.
+ @param {number} currentTimeSec - Absolute playback position in seconds.
+ @returns {{audioChapterIndex: number, percentInChapter: number}|null} Null if
+   currentTimeSec falls outside every chapter (e.g. empty chapters array).
+*/
+function secondsToChapterPosition(chapters, currentTimeSec) {
+  if (!chapters || chapters.length === 0) return null;
+  const idx = chapters.findIndex((ch) => currentTimeSec >= ch.startSec && currentTimeSec < ch.endSec);
+  // Falls through to the last chapter if currentTimeSec is at/past the very
+  // end of the book (findIndex misses because endSec is an exclusive bound).
+  const resolvedIdx = idx !== -1 ? idx : chapters.length - 1;
+  const chapter = chapters[resolvedIdx];
+  const duration = chapter.endSec - chapter.startSec;
+  const percentInChapter = duration > 0 ? (currentTimeSec - chapter.startSec) / duration : 0;
+  return { audioChapterIndex: resolvedIdx, percentInChapter: Math.min(1, Math.max(0, percentInChapter)) };
+}
+
+// -----------------------------------------------------------------
+// CHAPTER CALIBRATION
+// -----------------------------------------------------------------
+/*
+ Two-pane picker: click one EPUB chapter, click one audio chapter, save. The
+ difference between their indices becomes chapterOffset. Requires the book
+ to actually be open in the reader (activeSpineArray/activeChapterTitles
+ populated) since that's the only place EPUB chapter titles are available -
+ calibrating a book that isn't currently open just shows a message asking
+ the user to open it first, rather than trying to load it separately here.
+*/
+
+let calibrationSelectedEpubIndex = null;
+let calibrationSelectedAudioIndex = null;
+let calibrationTargetBookId = null;
+
+/**
+ Opens the calibration modal for a book, populating both chapter lists.
+ @param {number} bookId - id of the book to calibrate.
+*/
+async function openCalibrationModal(bookId) {
+  if (bookId == null) return;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+
+  calibrationTargetBookId = bookId;
+  calibrationSelectedEpubIndex = null;
+  calibrationSelectedAudioIndex = null;
+
+  const epubList = document.getElementById("calibration-epub-list");
+  const audioList = document.getElementById("calibration-audio-list");
+  const statusEl = document.getElementById("calibration-status");
+
+  if (!activeBookObject || activeBookObject.id !== bookId || activeSpineArray.length === 0) {
+    epubList.innerHTML = "<p>Open this book in the reader first to calibrate.</p>";
+    audioList.innerHTML = "";
+    statusEl.textContent = "";
+    document.getElementById("audio-calibration-modal").style.display = "flex";
+    return;
+  }
+
+  epubList.innerHTML = "";
+  activeSpineArray.forEach((_, idx) => {
+    const row = document.createElement("div");
+    row.textContent = `${idx + 1}. ${activeChapterTitles[idx] ?? `Chapter ${idx + 1}`}`;
+    row.style.cursor = "pointer";
+    row.onclick = () => selectCalibrationEpubChapter(idx, row);
+    epubList.appendChild(row);
+  });
+
+  audioList.innerHTML = "";
+  audiobook.chapters.forEach((ch, idx) => {
+    const row = document.createElement("div");
+    row.textContent = `${idx + 1}. ${ch.title ?? `Chapter ${idx + 1}`}`;
+    row.style.cursor = "pointer";
+    row.onclick = () => selectCalibrationAudioChapter(idx, row);
+    audioList.appendChild(row);
+  });
+
+  statusEl.textContent = "Select one chapter from each side.";
+  document.getElementById("audio-calibration-modal").style.display = "flex";
+}
+
+/**
+ Marks an EPUB chapter row as selected (visually and in state). Deselects
+ any previously-selected row in the same list first, so only one can be
+ active at a time.
+ @param {number} idx - 0-indexed spine position clicked.
+ @param {HTMLElement} rowEl - The clicked row, for highlight styling.
+*/
+function selectCalibrationEpubChapter(idx, rowEl) {
+  document.querySelectorAll("#calibration-epub-list > div").forEach((el) => (el.style.fontWeight = "normal"));
+  rowEl.style.fontWeight = "bold";
+  calibrationSelectedEpubIndex = idx;
+  updateCalibrationStatus();
+}
+
+/**
+ Marks an audio chapter row as selected. Same single-selection behavior as
+ selectCalibrationEpubChapter().
+ @param {number} idx - 0-indexed audio chapter clicked.
+ @param {HTMLElement} rowEl - The clicked row, for highlight styling.
+*/
+function selectCalibrationAudioChapter(idx, rowEl) {
+  document.querySelectorAll("#calibration-audio-list > div").forEach((el) => (el.style.fontWeight = "normal"));
+  rowEl.style.fontWeight = "bold";
+  calibrationSelectedAudioIndex = idx;
+  updateCalibrationStatus();
+}
+
+function updateCalibrationStatus() {
+  const statusEl = document.getElementById("calibration-status");
+  if (calibrationSelectedEpubIndex == null || calibrationSelectedAudioIndex == null) {
+    statusEl.textContent = "Select one chapter from each side.";
+  } else {
+    statusEl.textContent = `EPUB chapter ${calibrationSelectedEpubIndex + 1} = Audio chapter ${calibrationSelectedAudioIndex + 1}`;
+  }
+}
+
+function closeCalibrationModal() {
+  document.getElementById("audio-calibration-modal").style.display = "none";
+  calibrationTargetBookId = null;
+}
+
+/**
+ Saves the calibration: computes chapterOffset from the two selected
+ indices and persists it via setAudiobookChapterOffset().
+*/
+async function submitCalibration() {
+  if (calibrationSelectedEpubIndex == null || calibrationSelectedAudioIndex == null) return;
+  const offset = calibrationSelectedEpubIndex - calibrationSelectedAudioIndex;
+  await setAudiobookChapterOffset(calibrationTargetBookId, offset);
+  closeCalibrationModal();
 }
