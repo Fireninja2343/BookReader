@@ -265,6 +265,7 @@ async function handleResumeListeningClick() {
     document.getElementById("audio-pairing-status").textContent = "Resumed, metadata matches.";
     loadM4bAudio(resumed.file);
     document.getElementById("audio-pairing-transport").style.display = "flex";
+    await restoreOwnListeningPosition(resumed.bookId);
     maybePromptSyncAudioToReading(resumed.bookId);
   } else {
     showMismatchTable(mismatches, { file: resumed.file, handle: null });
@@ -589,4 +590,25 @@ let activeBookAudioPairingCache = null;
 async function refreshActiveBookAudioPairingCache(bookId) {
   const audiobook = await getAudiobookForBook(bookId);
   activeBookAudioPairingCache = audiobook ? bookId : null;
+}
+
+/**
+ Restores the audio to its own last recorded listening position (not a
+ cross-mode sync - just "continue where this file itself left off"). Called
+ right after any successful load, before the cross-mode prompt, so
+ resuming a listening session picks up mid-chapter rather than always
+ restarting at 0:00. No-op (and no prompt) if no listening position was
+ ever recorded, or if the most recent record was actually a reading-mode
+ write (that case is what maybePromptSyncAudioToReading() handles instead).
+
+ @param {number} bookId - id of the book whose audio just loaded.
+*/
+async function restoreOwnListeningPosition(bookId) {
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook || !activeAudioElement) return;
+  const position = await getAudioSyncPosition(bookId);
+  if (!position || position.lastMode !== "listening") return;
+
+  const seconds = chapterPositionToSeconds(audiobook.chapters, position.chapterIndex, position.percentInChapter);
+  if (seconds != null) seekAudio(seconds);
 }
