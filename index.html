@@ -583,7 +583,7 @@
         </svg>
     </div>
 
-    <div id="sign-in">
+    <div id="sign-in" class="bottom-side-panel">
             <button id="btn-sync-signin" onclick="signInWithGoogle()">🔄 Sign in to Sync</button>
             <span id="sync-status">☁️ Not signed in</span>
             <button id="btn-hard-reload" onclick="hardReloadApp()"
@@ -595,7 +595,7 @@
          showLibraryState(), 11-view-router.js) - same fixed-position slot #sign-in
          occupies in the library, since the two are never visible at the same time.
          Minimal for Phase 3; a fuller player replaces this in Phase 6. -->
-    <div id="audio-floating-panel" style="margin: 0; position: fixed; z-index: 900; align-items: center; gap: 8px; background-color: var(--bg-card); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); right: 10px; bottom: 40px; padding: 5px 10px; display: none;">
+    <div id="audio-floating-panel" class="bottom-side-panel">
         <span style="font-size: 0.8em;">
             Ch <span id="audio-floating-chapter-display">-/-</span> ·
             <span id="audio-floating-chapter-time-display">-/-</span> ·
