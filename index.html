@@ -114,9 +114,9 @@
             <button onclick="handlePairAudiobookClick()">📂 Pick M4B File</button>
             <button onclick="handleResumeListeningClick(); saveAndApplyUserStyles()">▶ Resume Listening</button>
             
-            <div style="display: flex; gap: 0; margin: 10px 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden;">
-            <button id="sync-mode-chapter" onclick="selectSyncMode('chapter')" style="flex:1; border-radius:0; border: none; background: var(--bg-card); padding: 6px 12px; transition: background 0.2s;">Chapter</button>
-            <button id="sync-mode-whole" onclick="selectSyncMode('whole')" style="flex:1; border-radius:0; border: none; background: var(--bg-card); padding: 6px 12px; transition: background 0.2s;">Whole Book</button>
+            <div style="display: flex;gap: 1px;margin: 10px 50px;overflow: hidden;height: 30px;">
+                <button id="sync-mode-chapter" onclick="selectSyncMode('chapter')" class="sync-mode-button">Chapter</button>
+                <button id="sync-mode-whole" onclick="selectSyncMode('whole')" class="sync-mode-button">Whole Book</button>
             </div>
             
             <div id="chapter-calibration-section" style="display: none; margin: 8px 0;">
