@@ -518,6 +518,21 @@ function formatMinutes(mins) {
 }
 
 /**
+ Formats a seconds value as H:MM:SS (or M:SS under an hour).
+ @param {number} totalSeconds
+ @returns {string}
+*/
+function formatTime(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : m;
+  const ss = String(sec).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
  Formats a calendar-time duration in ms (e.g. firstOpened to completedDate) - hours while under a day, whole
  days otherwise. Kept separate from formatMinutes() above since that formats accumulated reading time (hh/mm)
  while this formats elapsed wall-clock time between two dates.

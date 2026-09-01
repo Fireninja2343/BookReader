@@ -90,6 +90,9 @@ function computeAdaptiveStepPx() {
 let lastScrollTime = 0;
 let interval = null;
 const fill = document.getElementById("fill");
+/** Params the currently-running scroll loop was started with - read by stopScroll()/updateBar() so they don't need their own parameters. */
+let activeScrollParams = null;
+
 /**
  Re-initializes autoscroll with updated speed or delay settings when input changes.
  */
@@ -102,33 +105,61 @@ function applySpeedChange() {
 document.getElementById("setting-scroll-delay").addEventListener("input", applySpeedChange);
 
 /**
- Starts autoscroll timer loop, advances reader container, and initializes progress bar animation.
- */
-function startScroll() {
+ Starts the autoscroll timer loop, advancing the reader container by a
+ caller-supplied step on each tick and animating the progress bar fill.
+ Generic engine shared by the word-density autoscroll (toggleScroll(),
+ default params below) and audio-sync auto-scroll (25-audio-sync.js,
+ which calls this directly with its own step/cooldown/color) - both are
+ delta-based (scrollBy), just driven by different step logic.
+
+ @param {Object} [params] - Overrides for this run. Omit entirely for the
+   default word-density behavior.
+ @param {() => number} [params.getStepPx] - Returns the pixel delta to scrollBy() each tick. Defaults to computeAdaptiveStepPx().
+ @param {() => number} [params.getCooldownMs] - Returns ms between ticks. Defaults to the existing #setting-scroll-delay-based getCooldownMs().
+ @param {string} [params.colorVar] - CSS var for the fill's glow color. Defaults to "--accent".
+ @param {string} [params.glowVar] - CSS var for the fill's box-shadow color. Defaults to "--glow".
+*/
+function startScroll(params) {
+  activeScrollParams = {
+    getStepPx: params?.getStepPx ?? computeAdaptiveStepPx,
+    getCooldownMs: params?.getCooldownMs ?? getCooldownMs,
+    colorVar: params?.colorVar ?? "--accent",
+    glowVar: params?.glowVar ?? "--glow",
+  };
+
   lastScrollTime = Date.now();
   fill.style.width = "100%";
   interval = setInterval(() => {
-    document.getElementById("reader-container").scrollBy(0, computeAdaptiveStepPx());
-
+    document.getElementById("reader-container").scrollBy(0, activeScrollParams.getStepPx());
     lastScrollTime = Date.now();
-  }, getCooldownMs());
-  fill.style.boxShadow = "0 0 3px 5px var(--accent)";
+  }, activeScrollParams.getCooldownMs());
+  fill.style.background = `var(${activeScrollParams.colorVar})`;
+  fill.style.boxShadow = `0 0 3px 5px var(${activeScrollParams.glowVar})`;
   requestAnimationFrame(updateBar);
 }
 
 /**
- Stops autoscroll, clears interval timer, and resets progress bar visual styling.
- */
+ Stops the currently-running scroll loop: clears the interval timer and
+ resets the progress bar's visual styling. Does NOT touch `enabled` -
+ callers own their own state flag (this file's toggleScroll() sets enabled
+ itself around its calls; 25-audio-sync.js keeps its own separate flag) so
+ stopping one loop can never accidentally flip the other caller's state.
+*/
 function stopScroll() {
   clearInterval(interval);
   fill.style.boxShadow = "none";
+  fill.style.background = "";
   fill.style.width = "100%";
   interval = null;
-  enabled = false;
+  activeScrollParams = null;
 }
 
 /**
- Toggles autoscroll state between active and inactive.
+ Toggles autoscroll state between active and inactive. Always uses the
+ default word-density params - audio-sync starts/stops its own loop
+ directly via startScroll()/stopScroll() rather than through this toggle,
+ since it has its own enable condition (audio playing + paired) instead of
+ a simple on/off.
  */
 function toggleScroll() {
   enabled = !enabled;
@@ -138,14 +169,19 @@ function toggleScroll() {
 }
 
 /**
- Updates progress bar width via requestAnimationFrame to show time remaining until next scroll tick.
- */
+ Updates progress bar width via requestAnimationFrame to show time remaining
+ until next scroll tick. Driven by the shared mechanical state (interval/
+ activeScrollParams), not the word-density enabled flag, so this keeps
+ running correctly whichever caller (word-density or audio-sync) started
+ the loop.
+*/
 function updateBar() {
-  if (!enabled) return;
+  if (!interval || !activeScrollParams) return;
 
   const now = Date.now();
-  const remaining = Math.max(0, getCooldownMs() - (now - lastScrollTime));
-  const pct = remaining / getCooldownMs();
+  const cooldownMs = activeScrollParams.getCooldownMs();
+  const remaining = Math.max(0, cooldownMs - (now - lastScrollTime));
+  const pct = remaining / cooldownMs;
 
   fill.style.width = (pct * 100) + "%";
 
@@ -160,8 +196,13 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-/** Stops autoscroll on general keyboard interaction (excluding arrow keys and Ctrl+D). */
+/** Stops word-density autoscroll on general keyboard interaction (excluding
+    arrow keys and Ctrl+D). Guarded by enabled - audio-sync auto-scroll
+    (25-audio-sync.js) runs through this same startScroll()/stopScroll()
+    engine but keeps its own separate enable state, and per design only
+    stopping audio playback (not keyboard input) should end that one. */
 document.addEventListener("keydown", (e) => {
+  if (!enabled) return;
   if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
     return;
   }

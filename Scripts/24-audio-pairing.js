@@ -225,6 +225,7 @@ async function handlePairAudiobookClick() {
     const metadata = await pairAudiobookFile(audioPairingTargetBookId, picked.file, picked.handle);
     document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
     loadM4bAudio(picked.file);
+    attachAudioPositionDisplay(audioPairingTargetBookId);
     document.getElementById("audio-pairing-transport").style.display = "flex";
     openCalibrationModal(audioPairingTargetBookId);
     maybePromptSyncAudioToReading(audioPairingTargetBookId);
@@ -237,6 +238,7 @@ async function handlePairAudiobookClick() {
     const metadata = await pairAudiobookFile(audioPairingTargetBookId, picked.file, picked.handle);
     document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
     loadM4bAudio(picked.file);
+    attachAudioPositionDisplay(audioPairingTargetBookId);
     document.getElementById("audio-pairing-transport").style.display = "flex";
     openCalibrationModal(audioPairingTargetBookId);
     maybePromptSyncAudioToReading(audioPairingTargetBookId);
@@ -264,6 +266,7 @@ async function handleResumeListeningClick() {
   if (mismatches.length === 0) {
     document.getElementById("audio-pairing-status").textContent = "Resumed, metadata matches.";
     loadM4bAudio(resumed.file);
+    attachAudioPositionDisplay(resumed.bookId);
     document.getElementById("audio-pairing-transport").style.display = "flex";
     await restoreOwnListeningPosition(resumed.bookId);
     maybePromptSyncAudioToReading(resumed.bookId);
@@ -611,4 +614,82 @@ async function restoreOwnListeningPosition(bookId) {
 
   const seconds = chapterPositionToSeconds(audiobook.chapters, position.chapterIndex, position.percentInChapter);
   if (seconds != null) seekAudio(seconds);
+}
+
+// -----------------------------------------------------------------
+// PAIRING PANEL & FLOATING PANEL POSITION DISPLAY
+// -----------------------------------------------------------------
+/*
+ Live chapter/time readout, driven by the <audio> element's native
+ 'timeupdate' event (fires ~4x/sec during playback) rather than a separate
+ polling loop - cheap, and exactly what the event exists for.
+
+ Two display targets share one update: the pairing panel's readout and the
+ reader's floating panel (index.html). Writing both from a single fetch/calc
+ pass avoids duplicating the chapter-lookup logic - each target is just a
+ set of element IDs, written to only if those elements actually exist, so
+ whichever panel isn't currently in the DOM/visible is silently skipped
+ rather than erroring. Phase 6's fuller player replaces the pairing-panel
+ target entirely; the floating-panel target is expected to stay.
+*/
+
+/**
+ Attaches the position-display update to the currently loaded audio
+ element. Call once per load (after loadM4bAudio()) - safe to call
+ repeatedly since a fresh load means a fresh element to attach to anyway.
+ @param {number} bookId - id of the book whose audio is loaded, for chapter lookups.
+*/
+function attachAudioPositionDisplay(bookId) {
+  if (!activeAudioElement) return;
+  activeAudioElement.addEventListener("timeupdate", () => updateAudioPositionDisplay(bookId));
+}
+
+/**
+ Writes a computed chapter/time readout into one set of display elements.
+ Each id is optional - missing elements (the panel isn't in the DOM, or
+ this target doesn't show all three fields) are silently skipped.
+ @param {Object} ids - {chapterId, chapterTimeId, totalTimeId}, each an element id or omitted.
+ @param {Object|null} chapterPos - {audioChapterIndex, percentInChapter} from secondsToChapterPosition(), or null.
+ @param {Object} audiobook - The paired audiobook record.
+ @param {number} currentTime - Current playback position in seconds.
+*/
+function writeAudioPositionDisplay(ids, chapterPos, audiobook, currentTime) {
+  const chapterDisplay = ids.chapterId && document.getElementById(ids.chapterId);
+  const chapterTimeDisplay = ids.chapterTimeId && document.getElementById(ids.chapterTimeId);
+  const totalTimeDisplay = ids.totalTimeId && document.getElementById(ids.totalTimeId);
+
+  if (chapterPos) {
+    const chapter = audiobook.chapters[chapterPos.audioChapterIndex];
+    const timeIntoChapter = currentTime - chapter.startSec;
+    const chapterDuration = chapter.endSec - chapter.startSec;
+    if (chapterDisplay) chapterDisplay.textContent = `${chapterPos.audioChapterIndex + 1}/${audiobook.chapters.length}`;
+    if (chapterTimeDisplay) chapterTimeDisplay.textContent = `${formatTime(timeIntoChapter)}/${formatTime(chapterDuration)}`;
+  }
+  if (totalTimeDisplay) totalTimeDisplay.textContent = `${formatTime(currentTime)}/${formatTime(audiobook.duration)}`;
+}
+
+/**
+ One-shot refresh of every known position display, called on every
+ 'timeupdate' tick. Looks up chapters fresh each time rather than caching
+ them, since that's a cheap in-memory read (getAudiobookForBook still
+ touches IndexedDB, so this trades a small async cost for never risking a
+ stale chapters array after a recalibration or re-pair).
+ @param {number} bookId
+*/
+async function updateAudioPositionDisplay(bookId) {
+  if (!activeAudioElement) return;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+
+  const currentTime = activeAudioElement.currentTime;
+  const chapterPos = secondsToChapterPosition(audiobook.chapters, currentTime);
+
+  writeAudioPositionDisplay(
+    { chapterId: "audio-pairing-chapter-display", chapterTimeId: "audio-pairing-chapter-time-display", totalTimeId: "audio-pairing-total-time-display" },
+    chapterPos, audiobook, currentTime,
+  );
+  writeAudioPositionDisplay(
+    { chapterId: "audio-floating-chapter-display", chapterTimeId: "audio-floating-chapter-time-display", totalTimeId: "audio-floating-total-time-display" },
+    chapterPos, audiobook, currentTime,
+  );
 }

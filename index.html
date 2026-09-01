@@ -82,7 +82,6 @@
             <button id="btn-next-chapter" onclick="stepToNextChapter()" >Next Chapter ⏭️</button>
             <button id="pause-tracking" onclick="pauseActiveReadingTimer()" style="display:inline-block;">Pause ⏱️ Tracking</button>
             <button id="unpause-tracking" onclick="pauseActiveReadingTimer(false)" style="display:none;">Unpause ⏱️ Tracking</button>
-            <button id="btn-sync-reading-audio" onclick="toggleReadingAudioSync()">🔗 Sync Reading to Audio</button>
         </div>
             <button id="btn-global-stats" onclick="showStatsViewState()">📊 Stats</button>
             <button id="btn-global-notes" onclick="showNotesViewState()">🗒️ Notes</button>
@@ -122,21 +121,21 @@
         <div id="audio-pairing-transport" style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
           <div>
             <button onclick="playAudio()">▶ Play</button>
-            <button onclick="pauseAudio(); recordListeningPosition(audioPairingTargetBookId)">⏸ Pause</button>
-            <button onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(audioPairingTargetBookId)">⏪ -10s</button>
-            <button onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(audioPairingTargetBookId)">⏩ +10s</button>
+            <button onclick="pauseAudio()">⏸ Pause</button>
+            <button onclick="seekAudio(activeAudioElement.currentTime - 10)">⏪ -10s</button>
+            <button onclick="seekAudio(activeAudioElement.currentTime + 10)">⏩ +10s</button>
           </div>
           <div>
             <label>Jump to (s):</label>
             <input type="number" id="audio-pairing-seek-input" style="width: 80px;">
-            <button onclick="seekAudio(Number(document.getElementById('audio-pairing-seek-input').value)); recordListeningPosition(audioPairingTargetBookId)">Go</button>
+            <button onclick="seekAudio(Number(document.getElementById('audio-pairing-seek-input').value))">Go</button>
           </div>
           <div>
             <label>Go to chapter:</label>
             <input type="number" id="audio-pairing-chapter-input" style="width: 60px;" min="1">
             <button 
                 onclick="getAudiobookForBook(audioPairingTargetBookId).then(a => 
-                seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1)).then(() => recordListeningPosition(audioPairingTargetBookId))">
+                seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1))">
                 Go
             </button>
           </div>
@@ -590,6 +589,23 @@
             <button id="btn-hard-reload" onclick="hardReloadApp()"
             title="Clears cached app files and reloads - use this if the app is acting stale or a Service Worker/PWA update isn't showing up">
             🧹 Hard Reload</button>
+    </div>
+
+    <!-- Floating audio controls, shown only in the reader (see showReaderState()/
+         showLibraryState(), 11-view-router.js) - same fixed-position slot #sign-in
+         occupies in the library, since the two are never visible at the same time.
+         Minimal for Phase 3; a fuller player replaces this in Phase 6. -->
+    <div id="audio-floating-panel" style="margin: 0; position: fixed; z-index: 900; align-items: center; gap: 8px; background-color: var(--bg-card); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); right: 10px; bottom: 40px; padding: 5px 10px; display: none;">
+        <span style="font-size: 0.8em;">
+            Ch <span id="audio-floating-chapter-display">-/-</span> ·
+            <span id="audio-floating-chapter-time-display">-/-</span> ·
+            <span id="audio-floating-total-time-display">-/-</span>
+        </span>
+        <button onclick="playAudio()">▶</button>
+        <button onclick="pauseAudio(); recordListeningPosition(activeBookObject?.id)">⏸</button>
+        <button onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(activeBookObject?.id)">⏪10s</button>
+        <button onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(activeBookObject?.id)">10s⏩</button>
+        <button id="btn-sync-reading-audio" onclick="toggleReadingAudioSync()">🔗 Sync to Reading</button>
     </div>
 
     <div id="version-toast" class="hidden"></div>

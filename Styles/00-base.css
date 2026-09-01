@@ -20,6 +20,8 @@
     --card-dimension-width: 160px;
     --stat-good-rgb: 96, 200, 120;
     --stat-bad-rgb: 224, 100, 100;
+    --audio-accent: #e26b58;
+    --audio-glow: #ff3939;
 }
 
 [data-theme="oled"] {
@@ -34,6 +36,8 @@
     --border: #222222;
     --stat-good-rgb: 100, 220, 130;
     --stat-bad-rgb: 235, 95, 95;
+    --audio-accent: #86c5ff;
+    --audio-glow: #4db8ff;
 }
 
 [data-theme="sepia"] {
@@ -48,6 +52,8 @@
     --border: #d3c29d;
     --stat-good-rgb: 60, 130, 70;
     --stat-bad-rgb: 165, 55, 45;
+    --audio-accent: #3d6b8a;
+    --audio-glow: #2f8fc4;
 }
 
 ::-webkit-scrollbar {
@@ -388,7 +394,7 @@ input[type="range"]::-moz-range-thumb {
     text-align: center;
 }
 
-#sign-in {
+.bottom-side-panel {
     position: fixed;
     right: 16px;
     bottom: 45px;
@@ -403,15 +409,17 @@ input[type="range"]::-moz-range-thumb {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
+
 #sign-in #sync-status {
     font-size: 12px;
     color: var(--text-muted);
     white-space: nowrap;
 }
 
-#sign-in button {
+.bottom-side-panel button {
     white-space: nowrap;
 }
+
 
 /* --- Version badge (bottom-right, above #sign-in) --- */
 #app-version-badge {

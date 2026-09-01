@@ -2,18 +2,44 @@
 // LIVE READING/LISTENING SYNC
 // -----------------------------------------------------------------
 /*
- WIP
+ Bridges 23-audio-player.js (playback) and the EPUB reader (10-reader-
+ controls.js / 09-epub-reader.js) using the pure mapping functions from
+ 24-audio-pairing.js. Owns no state those files already own - just reads
+ activeAudioElement/activeSpinePointer/etc. and drives them.
+
+ The live scroll loop runs through startScroll()/stopScroll() in
+ 26-auto-scroll.js - the same delta-based (scrollBy) tick engine the
+ word-density autoscroll uses, just with different step/cooldown/color
+ params. Each tick computes a fresh scroll delta from the audio's current
+ time rather than tracking an absolute target, so a missed or delayed tick
+ self-corrects on the next one instead of compounding drift.
+
+ Three things happen here:
+  1. The live sync loop: while "Sync Reading to Audio" is on AND audio is
+     playing, each tick maps activeAudioElement.currentTime to an EPUB
+     scroll position and scrollBy()s the difference, applying the
+     persistent user offset. See the manual-offset section for how user
+     scrolling during sync is handled.
+  2. Mode-switch prompts: when opening the reader or loading audio for a
+     paired book, if the *other* mode has a newer recorded position, ask
+     the user whether to jump to it. One-shot, not continuous, and not
+     forced - declining leaves the current position untouched.
+  3. Uncalibrated books default to offset 0 (EPUB chapter N = audio chapter
+     N) rather than blocking sync outright - calibration refines this,
+     it isn't a prerequisite for a rough first pass.
 */
 
 let syncModeActive = false;
-let syncTickInterval = null;
-/** Raw pixel offset added on top of every synced scroll position, until changed again or cleared. */
+/** Raw pixel offset added on top of every synced scroll target, until changed again or cleared. */
 let syncUserOffsetPx = 0;
+/** How often the sync loop ticks. Fixed, not user-configurable.
+ this is following real playback time, not an artificial reading pace. */
+const SYNC_TICK_MS = 250;
 
 /**
- True only while the sync tick's own programmatic scroll is being applied -
- scroll events firing during this window are guaranteed sync-caused, not
- user input, and are ignored outright rather than compared/measured. This
+ True only while a sync tick's own scrollBy() is being applied - scroll
+ events firing during this window are guaranteed sync-caused, not user
+ input, and are ignored outright rather than compared/measured. This
  avoids the race a delta-comparison approach has (a user scroll landing in
  the gap between ticks could otherwise be misread as sync drift).
 */
@@ -22,8 +48,6 @@ let syncApplyingScroll = false;
 /**
  Resolves the calibrated chapter offset for a paired book, defaulting to 0
  (EPUB chapter N = audio chapter N) if calibration hasn't been run yet.
- Centralizes that default so every sync function treats "uncalibrated" the
- same way instead of each guessing independently.
  @param {Object} audiobook - Record from getAudiobookForBook().
  @returns {number}
 */
@@ -48,73 +72,70 @@ async function toggleReadingAudioSync() {
   syncModeActive = true;
   syncUserOffsetPx = 0;
   attachSyncScrollListener();
-  syncTickInterval = setInterval(() => runSyncTick(audiobook), 1000);
-  // Run one tick immediately rather than waiting for the first interval,
-  // so turning sync on visibly does something right away.
-  runSyncTick(audiobook);
+  startScroll({
+    getStepPx: () => computeSyncStepPx(audiobook),
+    getCooldownMs: () => SYNC_TICK_MS,
+    colorVar: "--audio-accent",
+    glowVar: "--audio-glow",
+  });
 }
 
-/** Turns off live sync. Does not pause audio - per design, stopping playback
-    (not toggling sync) is what ends auto-scroll; this just stops the
-    reader from following along. */
+/**
+ Turns off live sync. Does not pause audio - per design, stopping playback
+ (not toggling sync) is what ends auto-scroll; this just stops the reader
+ from following along.
+*/
 function stopReadingAudioSync() {
   syncModeActive = false;
-  if (syncTickInterval) {
-    clearInterval(syncTickInterval);
-    syncTickInterval = null;
-  }
+  stopScroll();
   detachSyncScrollListener();
 }
 
 /**
- One tick of the live sync loop: maps the audio's current time to an EPUB
- position and scrolls there, applying the persistent user offset. Switches
- the rendered chapter first if the audio has moved into a different mapped
- chapter than what's currently on screen.
+ Computes this tick's scroll delta: maps the audio's current time to a
+ target EPUB scroll position (chapter + percent, converted to pixels, plus
+ the persistent user offset) and returns target - current scrollTop.
+ Called by startScroll()'s interval via getStepPx() - see 26-auto-scroll.js.
+ Switches the rendered chapter first if the audio has moved into a
+ different mapped chapter than what's currently on screen.
+
+ Wrapped in the syncApplyingScroll lock (set true here, released after the
+ scrollBy() this return value feeds into) so the resulting scroll event is
+ recognized as programmatic, not user input.
 
  @param {Object} audiobook - The paired audiobook record (for chapters + chapterOffset).
+ @returns {number} Pixel delta for startScroll()'s scrollBy() call. 0 if audio is paused/unavailable or nothing should move yet.
 */
-async function runSyncTick(audiobook) {
-  if (!syncModeActive || !activeAudioElement || activeAudioElement.paused) return;
+function computeSyncStepPx(audiobook) {
+  if (!syncModeActive || !activeAudioElement || activeAudioElement.paused) return 0;
 
   const chapterOffset = resolveChapterOffset(audiobook);
   const chapterPos = secondsToChapterPosition(audiobook.chapters, activeAudioElement.currentTime);
-  if (!chapterPos) return;
+  if (!chapterPos) return 0;
   const scrollTarget = mapChapterToScroll(chapterOffset, chapterPos.audioChapterIndex, chapterPos.percentInChapter);
 
   if (scrollTarget.epubSpineIndex !== activeSpinePointer) {
-    if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return;
+    if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return 0;
     activeSpinePointer = scrollTarget.epubSpineIndex;
-    await renderActiveChapterFromZip(activeZipInstance);
+    // Chapter switch re-renders asynchronously; this tick's delta is skipped
+    // (returns 0) rather than computed against a container that's mid-swap -
+    // the next tick, ~250ms later, picks up cleanly once the new chapter is rendered.
+    renderActiveChapterFromZip(activeZipInstance);
+    return 0;
   }
 
-  applySyncedScroll(scrollTarget.innerPct);
-}
-
-/**
- Applies a chapter-relative percent to the reader's actual scrollTop,
- adding the persistent user offset on top. Wrapped in the syncApplyingScroll
- lock so the resulting scroll event is recognized as programmatic, not user
- input - see the manual-offset section below.
-
- @param {number} innerPct - 0-1 target position within the current chapter.
-*/
-function applySyncedScroll(innerPct) {
   const container = document.getElementById("reader-container");
   const maxScroll = container.scrollHeight - container.clientHeight;
-  const target = Math.max(0, Math.min(maxScroll, innerPct * maxScroll + syncUserOffsetPx));
+  const targetScrollTop = Math.max(0, Math.min(maxScroll, scrollTarget.innerPct * maxScroll + syncUserOffsetPx));
 
   syncApplyingScroll = true;
-  container.scrollTop = target;
-  // scrollTop assignment fires 'scroll' synchronously in some browsers and
-  // asynchronously (next microtask/frame) in others - releasing the lock on
-  // a timeout rather than immediately after the assignment covers both,
-  // at the cost of a short window where a genuine user scroll landing in
-  // that same handful of milliseconds would also be ignored. Given ticks
-  // are 1s apart, this window is a small fraction of the gap between them.
-  setTimeout(() => {
-    syncApplyingScroll = false;
-  }, 50);
+  // Released on the next tick rather than a timer: startScroll()'s scrollBy()
+  // runs synchronously right after this returns, so by the time the interval's
+  // next tick fires (SYNC_TICK_MS later), any scroll event from this one has
+  // long since fired. Simpler and more reliable than guessing a timeout length.
+  setTimeout(() => { syncApplyingScroll = false; }, 0);
+
+  return targetScrollTop - container.scrollTop;
 }
 
 // -----------------------------------------------------------------
@@ -133,24 +154,25 @@ function applySyncedScroll(innerPct) {
  the next tick, just from the new offset going forward, per the design.
 */
 
-let syncLastTickTargetScrollTop = null;
+let syncLastKnownScrollTop = null;
 
 function attachSyncScrollListener() {
+  syncLastKnownScrollTop = document.getElementById("reader-container").scrollTop;
   document.getElementById("reader-container").addEventListener("scroll", handleSyncScrollEvent);
 }
 
 function detachSyncScrollListener() {
   document.getElementById("reader-container").removeEventListener("scroll", handleSyncScrollEvent);
-  syncLastTickTargetScrollTop = null;
+  syncLastKnownScrollTop = null;
 }
 
 function handleSyncScrollEvent() {
   if (!syncModeActive || syncApplyingScroll) return;
   const container = document.getElementById("reader-container");
-  if (syncLastTickTargetScrollTop != null) {
-    syncUserOffsetPx += container.scrollTop - syncLastTickTargetScrollTop;
+  if (syncLastKnownScrollTop != null) {
+    syncUserOffsetPx += container.scrollTop - syncLastKnownScrollTop;
   }
-  syncLastTickTargetScrollTop = container.scrollTop;
+  syncLastKnownScrollTop = container.scrollTop;
 }
 
 // -----------------------------------------------------------------

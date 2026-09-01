@@ -28,6 +28,8 @@ function showReaderState() {
     document.getElementById("app-version-badge").style.display = "none";
     document.getElementById("current-group-indicator").style.display = "none";
     document.getElementById("btn-library-settings").style.display = "none";
+    const audioFloatingPanel = document.getElementById("audio-floating-panel");
+    if (audioFloatingPanel) audioFloatingPanel.style.display = "flex";
 
     // Safety check in case the back-to-groups button was visible
     const backGroupBtn = document.getElementById("btn-back-group");
@@ -73,6 +75,8 @@ function showLibraryState() {
     document.getElementById("sign-in").style.display = "flex";
     document.getElementById("app-version-badge").style.display = "flex";
     document.getElementById("btn-library-settings").style.display = "inline-block";
+    const audioFloatingPanel = document.getElementById("audio-floating-panel");
+    if (audioFloatingPanel) audioFloatingPanel.style.display = "none";
 
     // Restore the view mode toggle, or the group back button, depending on context
     const viewModeSelector = document.getElementById("library-view-mode");
