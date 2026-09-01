@@ -34,7 +34,7 @@ let syncModeActive = false;
 let syncUserOffsetPx = 0;
 /** How often the sync loop ticks. Fixed, not user-configurable.
  this is following real playback time, not an artificial reading pace. */
-const SYNC_TICK_MS = 250;
+const SYNC_TICK_MS = 2500;
 
 /**
  True only while a sync tick's own scrollBy() is being applied - scroll
@@ -117,9 +117,6 @@ function computeSyncStepPx(audiobook) {
   if (scrollTarget.epubSpineIndex !== activeSpinePointer) {
     if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return 0;
     activeSpinePointer = scrollTarget.epubSpineIndex;
-    // Chapter switch re-renders asynchronously; this tick's delta is skipped
-    // (returns 0) rather than computed against a container that's mid-swap -
-    // the next tick, ~250ms later, picks up cleanly once the new chapter is rendered.
     renderActiveChapterFromZip(activeZipInstance);
     return 0;
   }
