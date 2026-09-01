@@ -118,37 +118,48 @@
         <button onclick="openCalibrationModal(audioPairingTargetBookId)">🎯 Calibrate Chapters</button>
         <!-- Simple Phase 1 transport, reused/carried forward from Phase 0's
              debug harness. Dedicated playback UI is Phase 6 polish. -->
-        <div id="audio-pairing-transport" style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
-          <div>
-            <button onclick="playAudio()">▶ Play</button>
-            <button onclick="pauseAudio()">⏸ Pause</button>
-            <button onclick="seekAudio(activeAudioElement.currentTime - 10)">⏪ -10s</button>
-            <button onclick="seekAudio(activeAudioElement.currentTime + 10)">⏩ +10s</button>
-          </div>
-          <div>
-            <label>Jump to (s):</label>
-            <input type="number" id="audio-pairing-seek-input" style="width: 80px;">
-            <button onclick="seekAudio(Number(document.getElementById('audio-pairing-seek-input').value))">Go</button>
-          </div>
-          <div>
-            <label>Go to chapter:</label>
-            <input type="number" id="audio-pairing-chapter-input" style="width: 60px;" min="1">
-            <button 
-                onclick="getAudiobookForBook(audioPairingTargetBookId).then(a => 
-                seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1))">
-                Go
-            </button>
-          </div>
-          <div>
-            <label>Speed (<span id="lbl-speed">1.0</span>)</label><br>
-            <input type="range" id="audio-pairing-speed-input" style="width: stretch;" min="0.1" max="2.5" step="0.01" value="1"
-                oninput="setAudioSpeed(Number(this.value)); saveAndApplyUserStyles();">
-          </div>
-          <div>
-            <label>Volume (<span id="lbl-volume">0.5</span>)</label><br>
-            <input type="range" id="audio-pairing-volume-input" style="width: stretch;" min="0" max="1" step="0.05" value=".5"
-                oninput="setAudioVolume(Number(this.value)); saveAndApplyUserStyles();">
-          </div>
+        <div id="audio-pairing-transport"
+            style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
+            <div style="display: flex; gap: 8px; font-size: 0.9em;">
+                <span>Ch <span id="audio-pairing-chapter-display">-/-</span></span>
+                <span><span id="audio-pairing-chapter-time-display">-/-</span></span>
+                <span><span id="audio-pairing-total-time-display">-/-</span></span>
+            </div>
+            <div>
+                <button onclick="playAudio()">▶ Play</button>
+                <button onclick="pauseAudio(); recordListeningPosition(audioPairingTargetBookId)">⏸
+                    Pause</button>
+                <button
+                    onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(audioPairingTargetBookId)">⏪
+                    -10s</button>
+                <button
+                    onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(audioPairingTargetBookId)">⏩
+                    +10s</button>
+            </div>
+            <div>
+                <label>Jump to (s):</label>
+                <input type="number" id="audio-pairing-seek-input" style="width: 80px;">
+                <button
+                    onclick="const sec = Number(document.getElementById('audio-pairing-seek-input').value); seekAudio(sec); recordListeningPosition(audioPairingTargetBookId)">Go</button>
+            </div>
+            <div>
+                <label>Go to chapter:</label>
+                <input type="number" id="audio-pairing-chapter-input" style="width: 60px;" min="1">
+                <button
+                    onclick="getAudiobookForBook(audioPairingTargetBookId).then(a => { seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1); recordListeningPosition(audioPairingTargetBookId); })">Go</button>
+            </div>
+            <div>
+                <label>Speed (<span id="lbl-speed">1.0</span>)</label><br>
+                <input type="range" id="audio-pairing-speed-input" style="width: stretch;" min="0.1" max="2.5"
+                    step="0.01" value="1"
+                    oninput="setAudioSpeed(Number(this.value)); saveAndApplyUserStyles();">
+            </div>
+            <div>
+                <label>Volume (<span id="lbl-volume">0.5</span>)</label><br>
+                <input type="range" id="audio-pairing-volume-input" style="width: stretch;" min="0" max="1"
+                    step="0.05" value=".5"
+                    oninput="setAudioVolume(Number(this.value)); saveAndApplyUserStyles();">
+            </div>
         </div>
         <button onclick="closeAudioPairingPanel()">Close</button>
       </div>
