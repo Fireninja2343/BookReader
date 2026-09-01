@@ -57,8 +57,7 @@ function resolveChapterOffset(audiobook) {
 
 /**
  Toggles live sync on/off. Turning on requires a paired book with audio
- loaded - silently does nothing if those aren't met (the button itself
- gets proper enabled/disabled styling in Phase 6).
+ loaded - silently does nothing if those aren't met.
 */
 async function toggleReadingAudioSync() {
   if (syncModeActive) {
@@ -68,6 +67,12 @@ async function toggleReadingAudioSync() {
   if (!activeBookObject || !activeAudioElement) return;
   const audiobook = await getAudiobookForBook(activeBookObject.id);
   if (!audiobook) return;
+
+  // Require a sync mode to be selected
+  if (!audiobook.syncMode) {
+    alert("Please select a sync mode (Chapter or Whole) in the pairing panel first.");
+    return;
+  }
 
   syncModeActive = true;
   syncUserOffsetPx = 0;
@@ -103,16 +108,25 @@ function stopReadingAudioSync() {
  scrollBy() this return value feeds into) so the resulting scroll event is
  recognized as programmatic, not user input.
 
- @param {Object} audiobook - The paired audiobook record (for chapters + chapterOffset).
+ @param {Object} audiobook - The paired audiobook record.
  @returns {number} Pixel delta for startScroll()'s scrollBy() call. 0 if audio is paused/unavailable or nothing should move yet.
 */
 function computeSyncStepPx(audiobook) {
   if (!syncModeActive || !activeAudioElement || activeAudioElement.paused) return 0;
 
-  const chapterOffset = resolveChapterOffset(audiobook);
   const chapterPos = secondsToChapterPosition(audiobook.chapters, activeAudioElement.currentTime);
   if (!chapterPos) return 0;
-  const scrollTarget = mapChapterToScroll(chapterOffset, chapterPos.audioChapterIndex, chapterPos.percentInChapter);
+
+  const scrollTarget = mapChapterToScroll({
+    mode: audiobook.syncMode,
+    chapterOffset: resolveChapterOffset(audiobook),
+    audioChapterIndex: chapterPos.audioChapterIndex,
+    percentInChapter: chapterPos.percentInChapter,
+    audiobook: audiobook,
+    chapterWordCounts: activeBookObject?.chapterWordCounts || [],
+    totalWords: activeBookObject?.totalWords || 0,
+    wholeBookOffset: audiobook.wholeBookOffset || 0,
+  });
 
   if (scrollTarget.epubSpineIndex !== activeSpinePointer) {
     if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return 0;
@@ -126,10 +140,6 @@ function computeSyncStepPx(audiobook) {
   const targetScrollTop = Math.max(0, Math.min(maxScroll, scrollTarget.innerPct * maxScroll + syncUserOffsetPx));
 
   syncApplyingScroll = true;
-  // Released on the next tick rather than a timer: startScroll()'s scrollBy()
-  // runs synchronously right after this returns, so by the time the interval's
-  // next tick fires (SYNC_TICK_MS later), any scroll event from this one has
-  // long since fired. Simpler and more reliable than guessing a timeout length.
   setTimeout(() => { syncApplyingScroll = false; }, 0);
 
   return targetScrollTop - container.scrollTop;
@@ -138,18 +148,6 @@ function computeSyncStepPx(audiobook) {
 // -----------------------------------------------------------------
 // MANUAL-SCROLL OFFSET DETECTION
 // -----------------------------------------------------------------
-/*
- A capturing-phase listener runs alongside the existing
- onscroll="trackReadingProgress()" HTML binding rather than replacing it -
- both fire independently, trackReadingProgress() keeps saving normal
- reading position regardless of sync state.
-
- Any scroll event that fires while syncApplyingScroll is false is
- unambiguously user-caused (wheel, drag, keyboard) - the reader's actual
- scrollTop, compared against what the last sync tick targeted, becomes the
- new persistent offset. This does NOT fight the user: sync keeps running on
- the next tick, just from the new offset going forward, per the design.
-*/
 
 let syncLastKnownScrollTop = null;
 
@@ -175,12 +173,6 @@ function handleSyncScrollEvent() {
 // -----------------------------------------------------------------
 // MODE-SWITCH PROMPTS
 // -----------------------------------------------------------------
-/*
- Triggered right when a file loads successfully (fresh pair, resume, or
- opening the reader) - the earliest natural moment, and consistent with
- where chapter calibration already auto-opens. Declining leaves the
- current position untouched; this never forces a jump.
-*/
 
 /**
  Call after the reader opens for a paired book. If a listening session is
@@ -197,8 +189,17 @@ async function promptSyncReadingToAudio(bookId) {
   const confirmed = confirm("Continue reading from your last listening session?");
   if (!confirmed) return;
 
-  const chapterOffset = resolveChapterOffset(audiobook);
-  const scrollTarget = mapChapterToScroll(chapterOffset, position.chapterIndex, position.percentInChapter);
+  const scrollTarget = mapChapterToScroll({
+    mode: audiobook.syncMode,
+    chapterOffset: resolveChapterOffset(audiobook),
+    audioChapterIndex: position.chapterIndex,
+    percentInChapter: position.percentInChapter,
+    audiobook: audiobook,
+    chapterWordCounts: activeBookObject?.chapterWordCounts || [],
+    totalWords: activeBookObject?.totalWords || 0,
+    wholeBookOffset: audiobook.wholeBookOffset || 0,
+  });
+
   if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return;
 
   activeSpinePointer = scrollTarget.epubSpineIndex;
@@ -223,8 +224,17 @@ async function promptSyncAudioToReading(bookId) {
   const confirmed = confirm("Jump audio to your last reading session?");
   if (!confirmed) return;
 
-  const chapterOffset = resolveChapterOffset(audiobook);
-  const chapterPos = mapScrollToChapter(chapterOffset, position.chapterIndex, position.percentInChapter);
+  const chapterPos = mapScrollToChapter({
+    mode: audiobook.syncMode,
+    chapterOffset: resolveChapterOffset(audiobook),
+    epubSpineIndex: position.chapterIndex,
+    innerPct: position.percentInChapter,
+    audiobook: audiobook,
+    chapterWordCounts: activeBookObject?.chapterWordCounts || [],
+    totalWords: activeBookObject?.totalWords || 0,
+    wholeBookOffset: audiobook.wholeBookOffset || 0,
+  });
+
   const seconds = chapterPositionToSeconds(audiobook.chapters, chapterPos.audioChapterIndex, chapterPos.percentInChapter);
   if (seconds != null) seekAudio(seconds);
 }

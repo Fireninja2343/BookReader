@@ -195,7 +195,7 @@ async function openAudioPairingPanel(bookId) {
   const statusEl = document.getElementById("audio-pairing-status");
   panel.style.display = "flex";
 
-  // Reset transport visibility unless audio is already loaded (e.g. reopening the panel mid-listen).
+  // Reset transport visibility unless audio is already loaded.
   document.getElementById("audio-pairing-transport").style.display =
     activeAudioElement ? "flex" : "none";
 
@@ -203,6 +203,38 @@ async function openAudioPairingPanel(bookId) {
   statusEl.textContent = existing
     ? `Paired: ${existing.title ?? existing.lastPickedFileName ?? "(untitled)"}`
     : "No audiobook paired yet.";
+
+  // ---- show/hide calibration sections based on sync mode ----
+  const modeChapter = document.getElementById("sync-mode-chapter");
+  const modeWhole = document.getElementById("sync-mode-whole");
+  const chapterCalDiv = document.getElementById("chapter-calibration-section");
+  const wholeCalDiv = document.getElementById("whole-calibration-section");
+
+  if (existing) {
+    const mode = existing.syncMode || null;
+    if (mode === "chapter") {
+      modeChapter.classList.add("active");
+      modeWhole.classList.remove("active");
+      chapterCalDiv.style.display = "block";
+      wholeCalDiv.style.display = "none";
+    } else if (mode === "whole") {
+      modeWhole.classList.add("active");
+      modeChapter.classList.remove("active");
+      chapterCalDiv.style.display = "none";
+      wholeCalDiv.style.display = "block";
+      updateWholeBookCalibrationDisplay();
+    } else {
+      // both off
+      modeChapter.classList.remove("active");
+      modeWhole.classList.remove("active");
+      chapterCalDiv.style.display = "none";
+      wholeCalDiv.style.display = "none";
+    }
+  } else {
+    chapterCalDiv.style.display = "none";
+    wholeCalDiv.style.display = "none";
+  }
+  // ---------------------------------------------------------
 
   if (activeAudioElement && existing) {
     await promptSyncAudioToReading(bookId);
@@ -348,38 +380,63 @@ async function handleMismatchChooseDifferent() {
 */
 
 /**
- Converts an audio chapter position into the corresponding EPUB spine
- position.
-
- @param {number} chapterOffset - epubSpineIndex - audioChapterIndex, from calibration.
- @param {number} audioChapterIndex - 0-indexed chapter in the M4B's chapters array.
- @param {number} percentInChapter - 0-1, how far through that audio chapter.
+ Converts an audio chapter position to an EPUB scroll position.
+ Supports both "chapter" (offset-based) and "whole" (percentage-based) modes.
+ @param {Object} params
+ @param {string} params.mode - "chapter" or "whole".
+ @param {number} params.chapterOffset - Used only in "chapter" mode.
+ @param {number} params.audioChapterIndex - Audio chapter index.
+ @param {number} params.percentInChapter - 0-1 within that audio chapter.
+ @param {Object} params.audiobook - Full audiobook record (for duration/chapters).
+ @param {number[]} params.chapterWordCounts - EPUB per‑chapter word counts.
+ @param {number} params.totalWords - EPUB total words.
+ @param {number} params.wholeBookOffset - Fractional offset for "whole" mode.
  @returns {{epubSpineIndex: number, innerPct: number}}
 */
-function mapChapterToScroll(chapterOffset, audioChapterIndex, percentInChapter) {
-  return {
-    epubSpineIndex: audioChapterIndex + chapterOffset,
-    innerPct: Math.min(1, Math.max(0, percentInChapter)),
-  };
+function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInChapter, audiobook, chapterWordCounts, totalWords, wholeBookOffset }) {
+  if (mode === "whole") {
+    const chapter = audiobook.chapters[audioChapterIndex];
+    if (!chapter) return { epubSpineIndex: 0, innerPct: 0 };
+    const chapterDuration = chapter.endSec - chapter.startSec;
+    const audioPct = (chapter.startSec + percentInChapter * chapterDuration) / audiobook.duration;
+    const epubPct = Math.min(1, Math.max(0, audioPct + wholeBookOffset));
+    return findEpubChapterForPct(epubPct, chapterWordCounts, totalWords);
+  } else {
+    // Legacy chapter‑offset mode
+    return {
+      epubSpineIndex: audioChapterIndex + chapterOffset,
+      innerPct: Math.min(1, Math.max(0, percentInChapter)),
+    };
+  }
 }
 
 /**
- Converts an EPUB spine position into the corresponding audio chapter
- position. Inverse of mapChapterToScroll().
-
- @param {number} chapterOffset - epubSpineIndex - audioChapterIndex, from calibration.
- @param {number} epubSpineIndex - 0-indexed chapter in activeSpineArray.
- @param {number} innerPct - 0-1, how far through that EPUB chapter (i.e. innerPct
-   as already computed by trackReadingProgress()).
+ Converts an EPUB scroll position to an audio chapter position.
+ Supports both modes.
+ @param {Object} params
+ @param {string} params.mode - "chapter" or "whole".
+ @param {number} params.chapterOffset - Used only in "chapter" mode.
+ @param {number} params.epubSpineIndex - EPUB chapter index.
+ @param {number} params.innerPct - 0-1 within that EPUB chapter.
+ @param {Object} params.audiobook - Full audiobook record.
+ @param {number[]} params.chapterWordCounts - EPUB per‑chapter word counts.
+ @param {number} params.totalWords - EPUB total words.
+ @param {number} params.wholeBookOffset - Fractional offset for "whole" mode.
  @returns {{audioChapterIndex: number, percentInChapter: number}}
 */
-function mapScrollToChapter(chapterOffset, epubSpineIndex, innerPct) {
-  return {
-    audioChapterIndex: epubSpineIndex - chapterOffset,
-    percentInChapter: Math.min(1, Math.max(0, innerPct)),
-  };
+function mapScrollToChapter({ mode, chapterOffset, epubSpineIndex, innerPct, audiobook, chapterWordCounts, totalWords, wholeBookOffset }) {
+  if (mode === "whole") {
+    const epubPct = cumulativeWordPct(epubSpineIndex, innerPct, chapterWordCounts, totalWords);
+    const audioPct = Math.min(1, Math.max(0, epubPct - wholeBookOffset));
+    const seconds = audioPct * audiobook.duration;
+    return secondsToChapterPosition(audiobook.chapters, seconds);
+  } else {
+    return {
+      audioChapterIndex: epubSpineIndex - chapterOffset,
+      percentInChapter: Math.min(1, Math.max(0, innerPct)),
+    };
+  }
 }
-
 /**
  Resolves an audio chapter position to an absolute seek time in seconds,
  using the audiobook's actual chapter boundaries (not just the offset math -
@@ -421,6 +478,55 @@ function secondsToChapterPosition(chapters, currentTimeSec) {
   return { audioChapterIndex: resolvedIdx, percentInChapter: Math.min(1, Math.max(0, percentInChapter)) };
 }
 
+// -----------------------------------------------------------------
+// WHOLE-BOOK PERCENTAGE HELPERS (for syncMode "whole")
+// -----------------------------------------------------------------
+
+/**
+ Computes the cumulative word percentage for a given EPUB spine position.
+ @param {number} spineIndex - 0-indexed chapter index.
+ @param {number} innerPct - 0-1 scroll fraction within that chapter.
+ @param {number[]} chapterWordCounts - Per‑chapter word counts.
+ @param {number} totalWords - Sum of chapterWordCounts.
+ @returns {number} 0-1 fraction of total words.
+*/
+function cumulativeWordPct(spineIndex, innerPct, chapterWordCounts, totalWords) {
+  if (!chapterWordCounts || chapterWordCounts.length === 0 || totalWords === 0) {
+    // Fallback: treat chapters as equal length
+    const n = Math.max(1, chapterWordCounts?.length || 1);
+    return (spineIndex + innerPct) / n;
+  }
+  const cumBefore = chapterWordCounts.slice(0, spineIndex).reduce((a, b) => a + b, 0);
+  const wordsInChapter = chapterWordCounts[spineIndex] || 0;
+  return (cumBefore + innerPct * wordsInChapter) / totalWords;
+}
+
+/**
+ Finds the EPUB chapter and inner percentage for a given whole‑book percentage.
+ @param {number} pct - 0-1 whole‑book fraction.
+ @param {number[]} chapterWordCounts - Per‑chapter word counts.
+ @param {number} totalWords - Sum of chapterWordCounts.
+ @returns {{epubSpineIndex: number, innerPct: number}}
+*/
+function findEpubChapterForPct(pct, chapterWordCounts, totalWords) {
+  if (!chapterWordCounts || chapterWordCounts.length === 0 || totalWords === 0) {
+    const n = Math.max(1, chapterWordCounts?.length || 1);
+    const idx = Math.min(Math.floor(pct * n), n - 1);
+    const inner = (pct * n) - idx;
+    return { epubSpineIndex: idx, innerPct: Math.min(1, Math.max(0, inner)) };
+  }
+  let cumulative = 0;
+  for (let i = 0; i < chapterWordCounts.length; i++) {
+    const wordCount = chapterWordCounts[i];
+    if (pct * totalWords < cumulative + wordCount || i === chapterWordCounts.length - 1) {
+      const before = cumulative;
+      const inChapter = (pct * totalWords - before) / wordCount;
+      return { epubSpineIndex: i, innerPct: Math.min(1, Math.max(0, inChapter)) };
+    }
+    cumulative += wordCount;
+  }
+  return { epubSpineIndex: chapterWordCounts.length - 1, innerPct: 1 };
+}
 // -----------------------------------------------------------------
 // CHAPTER CALIBRATION
 // -----------------------------------------------------------------
@@ -523,6 +629,147 @@ function updateCalibrationStatus() {
 function closeCalibrationModal() {
   document.getElementById("audio-calibration-modal").style.display = "none";
   calibrationTargetBookId = null;
+}
+
+// -----------------------------------------------------------------
+// WHOLE-BOOK CALIBRATION UI
+// -----------------------------------------------------------------
+
+let calibrationWholeEpubPct = null;
+let calibrationWholeAudioPct = null;
+let calibrationWholeTargetBookId = null;
+
+/**
+ Opens the whole‑book calibration UI inside the pairing panel.
+ Reads current positions from the active reader and audio.
+*/
+async function openWholeBookCalibration() {
+  if (!audioPairingTargetBookId) return;
+  const bookId = audioPairingTargetBookId;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+  calibrationWholeTargetBookId = bookId;
+  calibrationWholeEpubPct = null;
+  calibrationWholeAudioPct = null;
+  await updateWholeBookCalibrationDisplay();
+}
+
+/**
+ Updates the EPUB and Audio percentage display in the pairing panel.
+ Also shows the current offset.
+*/
+async function updateWholeBookCalibrationDisplay() {
+  const bookId = audioPairingTargetBookId;
+  if (!bookId) return;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+
+  let epubPct = null;
+  let audioPct = null;
+
+  if (activeBookObject && activeBookObject.id === bookId && activeSpineArray.length > 0) {
+    const totalWords = activeBookObject.totalWords || 0;
+    const chapterWordCounts = activeBookObject.chapterWordCounts || [];
+    const container = document.getElementById("reader-container");
+    const innerPct = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
+    epubPct = cumulativeWordPct(activeSpinePointer, innerPct, chapterWordCounts, totalWords);
+  }
+
+  if (activeAudioElement && audiobook) {
+    audioPct = activeAudioElement.currentTime / audiobook.duration;
+  }
+
+  const statusEl = document.getElementById("whole-calibration-status");
+  if (epubPct !== null && audioPct !== null) {
+    statusEl.textContent = `📖 EPUB: ${(epubPct * 100).toFixed(1)}%  |  🎧 Audio: ${(audioPct * 100).toFixed(1)}%`;
+    const currentOffset = audiobook.wholeBookOffset || 0;
+    const offsetDisplay = (currentOffset * 100).toFixed(1);
+    const direction = currentOffset >= 0 ? "EPUB is ahead" : "Audio is ahead";
+    document.getElementById("whole-offset-display").textContent = `Offset: ${offsetDisplay}% (${direction})`;
+  } else {
+    statusEl.textContent = "Open the book and load audio to see percentages.";
+  }
+}
+
+/**
+ Sets the EPUB reference percentage for whole‑book calibration.
+*/
+async function setWholeCalibrationEpub() {
+  if (!audioPairingTargetBookId) return;
+  const bookId = audioPairingTargetBookId;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+  if (activeBookObject && activeSpineArray.length > 0) {
+    const totalWords = activeBookObject.totalWords || 0;
+    const chapterWordCounts = activeBookObject.chapterWordCounts || [];
+    const container = document.getElementById("reader-container");
+    const innerPct = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
+    calibrationWholeEpubPct = cumulativeWordPct(activeSpinePointer, innerPct, chapterWordCounts, totalWords);
+    document.getElementById("whole-calibration-status").textContent += " EPUB reference set.";
+  } else {
+    alert("Please open the book in the reader first.");
+  }
+  checkWholeCalibrationReady();
+}
+
+/**
+ Sets the Audio reference percentage for whole‑book calibration.
+*/
+async function setWholeCalibrationAudio() {
+  if (!audioPairingTargetBookId) return;
+  const audiobook = await getAudiobookForBook(audioPairingTargetBookId);
+  if (!audiobook) return;
+  if (activeAudioElement) {
+    calibrationWholeAudioPct = activeAudioElement.currentTime / audiobook.duration;
+    document.getElementById("whole-calibration-status").textContent += " Audio reference set.";
+  } else {
+    alert("Please load and play audio first.");
+  }
+  checkWholeCalibrationReady();
+}
+
+function checkWholeCalibrationReady() {
+  if (calibrationWholeEpubPct !== null && calibrationWholeAudioPct !== null) {
+    document.getElementById("whole-save-offset-btn").disabled = false;
+    document.getElementById("whole-calibration-status").textContent += " Ready to save offset.";
+  }
+}
+
+/**
+ Saves the calculated offset from the two reference points.
+*/
+async function saveWholeCalibrationOffset() {
+  if (calibrationWholeEpubPct === null || calibrationWholeAudioPct === null) return;
+  const offset = calibrationWholeEpubPct - calibrationWholeAudioPct;
+  await setAudiobookSyncMode(audioPairingTargetBookId, "whole", offset);
+  await updateWholeBookCalibrationDisplay();
+  document.getElementById("whole-calibration-status").textContent += ` Offset saved: ${(offset * 100).toFixed(1)}%`;
+  calibrationWholeEpubPct = null;
+  calibrationWholeAudioPct = null;
+  document.getElementById("whole-save-offset-btn").disabled = true;
+}
+
+/**
+ Resets the offset to 0.
+*/
+async function resetWholeCalibrationOffset() {
+  await setAudiobookSyncMode(audioPairingTargetBookId, "whole", 0);
+  await updateWholeBookCalibrationDisplay();
+  document.getElementById("whole-calibration-status").textContent += " Offset reset to 0.";
+}
+
+/**
+ Handler for the sync mode selection buttons (Chapter / Whole).
+*/
+async function selectSyncMode(mode) {
+  const bookId = audioPairingTargetBookId;
+  if (!bookId) return;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+  if (audiobook.syncMode === mode) return;
+  const offset = mode === "whole" ? (audiobook.wholeBookOffset || 0) : 0;
+  await setAudiobookSyncMode(bookId, mode, offset);
+  openAudioPairingPanel(bookId);
 }
 
 /**

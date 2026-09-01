@@ -107,19 +107,34 @@
             </select>
         </div>
     </header> 
-    <!-- Audio Books (1.3) pairing panel + mismatch modal. Opened via
-         openAudioPairingPanel(bookId) - see 24-audio-pairing.js. -->
     <div id="audio-pairing-panel" class="custom-modal" style="display: none; width:auto;">
-      <div class="modal-box">
-        <h3>Pair Audiobook</h3>
-        <p id="audio-pairing-status">No audiobook paired yet.</p>
-        <button onclick="handlePairAudiobookClick()">📂 Pick M4B File</button>
-        <button onclick="handleResumeListeningClick(); saveAndApplyUserStyles()">▶ Resume Listening</button>
-        <button onclick="openCalibrationModal(audioPairingTargetBookId)">🎯 Calibrate Chapters</button>
-        <!-- Simple Phase 1 transport, reused/carried forward from Phase 0's
-             debug harness. Dedicated playback UI is Phase 6 polish. -->
-        <div id="audio-pairing-transport"
-            style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
+        <div class="modal-box">
+            <h3>Pair Audiobook</h3>
+            <p id="audio-pairing-status">No audiobook paired yet.</p>
+            <button onclick="handlePairAudiobookClick()">📂 Pick M4B File</button>
+            <button onclick="handleResumeListeningClick(); saveAndApplyUserStyles()">▶ Resume Listening</button>
+            
+            <div style="display: flex; gap: 0; margin: 10px 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden;">
+            <button id="sync-mode-chapter" onclick="selectSyncMode('chapter')" style="flex:1; border-radius:0; border: none; background: var(--bg-card); padding: 6px 12px; transition: background 0.2s;">Chapter</button>
+            <button id="sync-mode-whole" onclick="selectSyncMode('whole')" style="flex:1; border-radius:0; border: none; background: var(--bg-card); padding: 6px 12px; transition: background 0.2s;">Whole Book</button>
+            </div>
+            
+            <div id="chapter-calibration-section" style="display: none; margin: 8px 0;">
+            <button onclick="openCalibrationModal(audioPairingTargetBookId)">🎯 Calibrate Chapters</button>
+            </div>
+            
+            <div id="whole-calibration-section" style="display: none; margin: 8px 0;">
+            <div id="whole-calibration-status">📖 EPUB: -  |  🎧 Audio: -</div>
+            <div id="whole-offset-display">Offset: 0.0%</div>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <button onclick="setWholeCalibrationEpub()">📌 Set EPUB Reference</button>
+                <button onclick="setWholeCalibrationAudio()">📌 Set Audio Reference</button>
+                <button id="whole-save-offset-btn" onclick="saveWholeCalibrationOffset()" disabled>💾 Save Offset</button>
+                <button onclick="resetWholeCalibrationOffset()">↺ Reset Offset</button>
+            </div>
+            </div>
+            
+            <div id="audio-pairing-transport" style="display: none; flex-direction: column; gap: 6px; margin-top: 10px;">
             <div style="display: flex; gap: 8px; font-size: 0.9em;">
                 <span>Ch <span id="audio-pairing-chapter-display">-/-</span></span>
                 <span><span id="audio-pairing-chapter-time-display">-/-</span></span>
@@ -127,40 +142,31 @@
             </div>
             <div>
                 <button id="pairing-play-btn" onclick="playAudio(); activateButton(this); deactivateButton(document.getElementById('pairing-pause-btn'))">▶ Play</button>
-                <button id="pairing-pause-btn" onclick="pauseAudio(); activateButton(this); deactivateButton(document.getElementById('pairing-play-btn'));
-                    recordListeningPosition(audioPairingTargetBookId)">⏸ Pause</button>
-                <button
-                    onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(audioPairingTargetBookId)">⏪-10s</button>
-                <button
-                    onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(audioPairingTargetBookId)">⏩+10s</button>
+                <button id="pairing-pause-btn" onclick="pauseAudio(); activateButton(this); deactivateButton(document.getElementById('pairing-play-btn')); recordListeningPosition(audioPairingTargetBookId)">⏸ Pause</button>
+                <button onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(audioPairingTargetBookId)">⏪-10s</button>
+                <button onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(audioPairingTargetBookId)">⏩+10s</button>
             </div>
             <div>
                 <label>Jump to (s):</label>
                 <input type="number" id="audio-pairing-seek-input" style="width: 80px;">
-                <button
-                    onclick="const sec = Number(document.getElementById('audio-pairing-seek-input').value); seekAudio(sec); recordListeningPosition(audioPairingTargetBookId)">Go</button>
+                <button onclick="const sec = Number(document.getElementById('audio-pairing-seek-input').value); seekAudio(sec); recordListeningPosition(audioPairingTargetBookId)">Go</button>
             </div>
             <div>
                 <label>Go to chapter:</label>
                 <input type="number" id="audio-pairing-chapter-input" style="width: 60px;" min="1">
-                <button
-                    onclick="getAudiobookForBook(audioPairingTargetBookId).then(a => { seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1); recordListeningPosition(audioPairingTargetBookId); })">Go</button>
+                <button onclick="getAudiobookForBook(audioPairingTargetBookId).then(a => { seekToChapter(a.chapters, Number(document.getElementById('audio-pairing-chapter-input').value) - 1); recordListeningPosition(audioPairingTargetBookId); })">Go</button>
             </div>
             <div>
                 <label>Speed (<span id="lbl-speed">1.0</span>)</label><br>
-                <input type="range" id="audio-pairing-speed-input" style="width: stretch;" min="0.1" max="2.5"
-                    step="0.01" value="1"
-                    oninput="setAudioSpeed(Number(this.value)); saveAndApplyUserStyles();">
+                <input type="range" id="audio-pairing-speed-input" style="width: stretch;" min="0.1" max="2.5" step="0.01" value="1" oninput="setAudioSpeed(Number(this.value)); saveAndApplyUserStyles();">
             </div>
             <div>
                 <label>Volume (<span id="lbl-volume">0.5</span>)</label><br>
-                <input type="range" id="audio-pairing-volume-input" style="width: stretch;" min="0" max="1"
-                    step="0.05" value=".5"
-                    oninput="setAudioVolume(Number(this.value)); saveAndApplyUserStyles();">
+                <input type="range" id="audio-pairing-volume-input" style="width: stretch;" min="0" max="1" step="0.05" value=".5" oninput="setAudioVolume(Number(this.value)); saveAndApplyUserStyles();">
             </div>
+            </div>
+            <button onclick="closeAudioPairingPanel()">Close</button>
         </div>
-        <button onclick="closeAudioPairingPanel()">Close</button>
-      </div>
     </div>
     <div id="audio-mismatch-modal" class="custom-modal" style="display: none;">
       <div class="modal-box">

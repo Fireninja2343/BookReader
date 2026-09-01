@@ -713,6 +713,10 @@ function pairAudiobook(bookId, metadata) {
         // the calibration modal (24-audio-pairing.js); null until calibrated,
         // meaning position mapping can't run yet for this book.
         chapterOffset: existing.chapterOffset ?? null,
+        // Sync mode: null (disabled), "chapter", or "whole". Set by the segmented control.
+        syncMode: existing.syncMode ?? null,
+        // Whole-book offset as fraction (e.g. 0.05 = +5%). Used only when syncMode === "whole".
+        wholeBookOffset: existing.wholeBookOffset ?? 0,
       };
       store.put(record);
     };
@@ -738,6 +742,30 @@ function setAudiobookChapterOffset(bookId, offset) {
       const record = e.target.result;
       if (record) {
         record.chapterOffset = offset;
+        store.put(record);
+      }
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+/**
+ Sets the sync mode and optional whole-book offset for a paired audiobook.
+ @param {number} bookId - id of the book.
+ @param {string|null} mode - "chapter", "whole", or null (disabled).
+ @param {number} [offset=0] - whole-book offset percentage (as fraction, e.g. 0.05 for +5%).
+ @returns {Promise<void>}
+*/
+function setAudiobookSyncMode(bookId, mode, offset = 0) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_AUDIOBOOKS], "readwrite");
+    const store = transaction.objectStore(STORE_AUDIOBOOKS);
+    store.get(bookId).onsuccess = (e) => {
+      const record = e.target.result;
+      if (record) {
+        record.syncMode = mode;
+        record.wholeBookOffset = offset;
         store.put(record);
       }
     };
