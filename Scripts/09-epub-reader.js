@@ -73,8 +73,8 @@ async function launchEpubReader(bookObject) {
       // If this book is paired with an audiobook and a listening session is
       // newer than this reading position, offer to jump there instead. Runs
       // after the normal restore above so declining leaves that restore intact.
-      if (typeof maybePromptSyncReadingToAudio === "function") {
-        maybePromptSyncReadingToAudio(bookObject.id);
+      if (typeof promptSyncReadingToAudio === "function") {
+        promptSyncReadingToAudio(bookObject.id);
       }
       // Caches whether this book is audio-paired, so trackReadingProgress()
       // (fired on every scroll event) can skip the position write for

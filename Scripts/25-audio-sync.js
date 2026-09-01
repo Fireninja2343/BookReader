@@ -188,7 +188,7 @@ function handleSyncScrollEvent() {
  to jump the reader to that spot.
  @param {number} bookId - id of the book just opened in the reader.
 */
-async function maybePromptSyncReadingToAudio(bookId) {
+async function promptSyncReadingToAudio(bookId) {
   const audiobook = await getAudiobookForBook(bookId);
   if (!audiobook) return;
   const position = await getAudioSyncPosition(bookId);
@@ -214,7 +214,7 @@ async function maybePromptSyncReadingToAudio(bookId) {
  offers to seek audio to that spot.
  @param {number} bookId - id of the book whose audio just loaded.
 */
-async function maybePromptSyncAudioToReading(bookId) {
+async function promptSyncAudioToReading(bookId) {
   const audiobook = await getAudiobookForBook(bookId);
   if (!audiobook || !activeAudioElement) return;
   const position = await getAudioSyncPosition(bookId);

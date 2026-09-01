@@ -203,6 +203,10 @@ async function openAudioPairingPanel(bookId) {
   statusEl.textContent = existing
     ? `Paired: ${existing.title ?? existing.lastPickedFileName ?? "(untitled)"}`
     : "No audiobook paired yet.";
+
+  if (activeAudioElement && existing) {
+    await promptSyncAudioToReading(bookId);
+  }
 }
 
 function closeAudioPairingPanel() {
@@ -228,7 +232,7 @@ async function handlePairAudiobookClick() {
     attachAudioPositionDisplay(audioPairingTargetBookId);
     document.getElementById("audio-pairing-transport").style.display = "flex";
     openCalibrationModal(audioPairingTargetBookId);
-    maybePromptSyncAudioToReading(audioPairingTargetBookId);
+    promptSyncAudioToReading(audioPairingTargetBookId);
     refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
     return;
   }
@@ -241,7 +245,7 @@ async function handlePairAudiobookClick() {
     attachAudioPositionDisplay(audioPairingTargetBookId);
     document.getElementById("audio-pairing-transport").style.display = "flex";
     openCalibrationModal(audioPairingTargetBookId);
-    maybePromptSyncAudioToReading(audioPairingTargetBookId);
+    promptSyncAudioToReading(audioPairingTargetBookId);
     refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
   } else {
     showMismatchTable(mismatches, picked);
@@ -269,7 +273,7 @@ async function handleResumeListeningClick() {
     attachAudioPositionDisplay(resumed.bookId);
     document.getElementById("audio-pairing-transport").style.display = "flex";
     await restoreOwnListeningPosition(resumed.bookId);
-    maybePromptSyncAudioToReading(resumed.bookId);
+    promptSyncAudioToReading(resumed.bookId);
   } else {
     showMismatchTable(mismatches, { file: resumed.file, handle: null });
   }
@@ -315,7 +319,7 @@ async function handleMismatchContinue() {
   document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? pendingMismatchFile.file.name}`;
   closeMismatchModal();
   openCalibrationModal(audioPairingTargetBookId);
-  maybePromptSyncAudioToReading(audioPairingTargetBookId);
+  promptSyncAudioToReading(audioPairingTargetBookId);
     refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
 }
 
@@ -602,7 +606,7 @@ async function refreshActiveBookAudioPairingCache(bookId) {
  resuming a listening session picks up mid-chapter rather than always
  restarting at 0:00. No-op (and no prompt) if no listening position was
  ever recorded, or if the most recent record was actually a reading-mode
- write (that case is what maybePromptSyncAudioToReading() handles instead).
+ write (that case is what promptSyncAudioToReading() handles instead).
 
  @param {number} bookId - id of the book whose audio just loaded.
 */
