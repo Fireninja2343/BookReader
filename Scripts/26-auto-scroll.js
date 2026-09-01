@@ -104,6 +104,7 @@ function applySpeedChange() {
 }
 document.getElementById("setting-scroll-delay").addEventListener("input", applySpeedChange);
 
+const toggleScrollBtn = document.getElementById("btn-toggle-scroll");
 /**
  Starts the autoscroll timer loop, advancing the reader container by a
  caller-supplied step on each tick and animating the progress bar fill.
@@ -126,7 +127,7 @@ function startScroll(params) {
     colorVar: params?.colorVar ?? "--accent",
     glowVar: params?.glowVar ?? "--glow",
   };
-
+  toggleScrollBtn.classList.add("active");
   lastScrollTime = Date.now();
   fill.style.width = "100%";
   interval = setInterval(() => {
@@ -152,6 +153,7 @@ function stopScroll() {
   fill.style.width = "100%";
   interval = null;
   activeScrollParams = null;
+  toggleScrollBtn.classList.remove("active");
 }
 
 /**

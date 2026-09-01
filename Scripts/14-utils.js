@@ -548,3 +548,18 @@ function formatCompletionDuration(ms) {
     const days = Math.round(hours / 24);
     return `${days} day${days === 1 ? "" : "s"}`;
 }
+
+function activateButton(button){
+  if (!button) return;
+  button.classList.add("active");
+}
+
+function deactivateButton(button){
+  if (!button) return;
+  button.classList.remove("active");
+}
+
+function toggleButton(button){
+  if (!button) return;
+  button.classList.toggle("active");
+}
