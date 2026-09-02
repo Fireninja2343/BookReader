@@ -131,6 +131,12 @@ function startScroll(params) {
   lastScrollTime = Date.now();
   fill.style.width = "100%";
   interval = setInterval(() => {
+    if (!activeScrollParams) {
+        // Params were cleared (e.g., stopScroll called) but interval still running – clean up.
+        clearInterval(interval);
+        interval = null;
+        return;
+    }
     document.getElementById("reader-container").scrollBy(0, activeScrollParams.getStepPx());
     lastScrollTime = Date.now();
   }, activeScrollParams.getCooldownMs());

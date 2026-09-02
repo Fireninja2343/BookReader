@@ -933,6 +933,7 @@ function updateAudioSyncPosition(bookId, position) {
 
 
 let lastForcedCloudProgressPush = {};
+const FORCE_PUSH_MIN_GAP_MS = Config.Sync.FORCE_PUSH_MIN_GAP_MS;
 /**
  Immediately pushes a book's current record to the cloud, bypassing the regular
  throttled progress push in updateBookProgressInDB(). Rate-limited per book by

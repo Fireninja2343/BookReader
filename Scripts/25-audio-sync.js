@@ -142,6 +142,13 @@ function computeSyncStepPx(audiobook) {
   syncApplyingScroll = true;
   setTimeout(() => { syncApplyingScroll = false; }, 0);
 
+  console.log("[sync] currentTime:", activeAudioElement.currentTime);
+  console.log("[sync] chapterPos:", chapterPos);
+  console.log("[sync] scrollTarget:", scrollTarget);
+  console.log("[sync] current scrollTop:", container.scrollTop);
+  console.log("[sync] targetScrollTop:", targetScrollTop);
+  console.log("[sync] delta:", targetScrollTop - container.scrollTop);
+
   return targetScrollTop - container.scrollTop;
 }
 
