@@ -64,6 +64,13 @@ async function toggleReadingAudioSync() {
     alert("Please select a sync mode (Chapter or Whole) in the pairing panel first.");
     return;
   }
+  if (audiobook.syncMode === "whole") {
+    const wordData = await resolveWordCountData(activeBookObject.id);
+    if (!wordData) {
+      alert("Whole-book sync needs this book's chapter word counts (computed at EPUB import). Re-import the book or switch to Chapter mode in the pairing panel.");
+      return;
+    }
+  }
 
   syncModeActive = true;
   syncUserOffsetPx = 0;
@@ -126,18 +133,33 @@ function computeSyncStepPx(audiobook) {
     wholeBookOffset: audiobook.wholeBookOffset || 0,
   });
 
-  // Audio moved into a different chapter than what's on screen: switch the
-  // rendered chapter and sit this tick out. The next tick computes against
-  // the new chapter's DOM.
+  if (!scrollTarget) return 0;
   if (scrollTarget.epubSpineIndex !== activeSpinePointer) {
     if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return 0;
     activeSpinePointer = scrollTarget.epubSpineIndex;
-    renderActiveChapterFromZip(activeZipInstance);
     syncUserOffsetPx = 0;
+    // The async render will reset scrollTop when it swaps the DOM. Null the
+    // baseline so its scroll events can't fold in as user input (the
+    // scrollHeight heuristic in handleSyncScrollEvent is the primary
+    // defense; this covers the no-scroll-event edge), then re-baseline once
+    // it settles.
+    syncLastKnownScrollTop = null;
+    syncLastKnownScrollHeight = null;
+    renderActiveChapterFromZip(activeZipInstance).then(() => {
+      const c = document.getElementById("reader-container");
+      if (c) {
+        syncLastKnownScrollTop = c.scrollTop;
+        syncLastKnownScrollHeight = c.scrollHeight;
+      }
+      if (typeof saveAndApplyUserStyles === "function") saveAndApplyUserStyles();
+    }).catch(() => {});
     return 0;
   }
 
-  const maxScroll = container.scrollHeight - container.clientHeight;
+  // Same denominator trackReadingProgress() uses - banner-inflated
+  // scrollHeight must not pull the sync target toward the banner zone.
+  const banner = document.getElementById("chapter-end-action-banner");
+  const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight - (banner ? banner.offsetHeight : 0));
   const targetScrollTop = Math.max(0, Math.min(maxScroll, scrollTarget.innerPct * maxScroll + syncUserOffsetPx));
   const delta = targetScrollTop - container.scrollTop;
 
@@ -146,19 +168,11 @@ function computeSyncStepPx(audiobook) {
       "target:", targetScrollTop, "current:", container.scrollTop, "delta:", delta);
   }
 
-  // Arm the lock ONLY if scrollBy() will actually move the container. No
-  // movement means no scroll event, so nothing would ever consume the lock
-  // and the next genuine user scroll would be swallowed. (<1px dead-zone:
-  // skipped sub-pixel deltas self-correct on the next tick because every
-  // tick targets an absolute position, not a running total.)
   if (Math.abs(delta) < 1) return 0;
 
-  // Released by handleSyncScrollEvent() when the scroll event lands - NOT by
-  // a timer. See the declaration comment for why the timed release was wrong.
   syncApplyingScroll = true;
   return delta;
 }
-
 // -----------------------------------------------------------------
 // MANUAL-SCROLL OFFSET DETECTION
 // -----------------------------------------------------------------
@@ -176,17 +190,27 @@ function computeSyncStepPx(audiobook) {
 */
 
 let syncLastKnownScrollTop = null;
+/**
+ scrollHeight at the time of the last baselined event. A changed scrollHeight
+ is the fingerprint of a layout shift (chapter render, banner injection, image
+ load, style reapply) rather than a user scroll - those events carry the
+ displacement of the RESET, not a user delta, and folding them into the offset
+ used to slam it to roughly -(old scrollTop) on every chapter switch.
+*/
+let syncLastKnownScrollHeight = null;
 
 function attachSyncScrollListener() {
   const container = document.getElementById("reader-container");
   syncApplyingScroll = false; // never inherit a stale lock from a previous session
   syncLastKnownScrollTop = container.scrollTop;
+  syncLastKnownScrollHeight = container.scrollHeight;
   container.addEventListener("scroll", handleSyncScrollEvent);
 }
 
 function detachSyncScrollListener() {
   document.getElementById("reader-container").removeEventListener("scroll", handleSyncScrollEvent);
   syncLastKnownScrollTop = null;
+  syncLastKnownScrollHeight = null;
   syncApplyingScroll = false;
 }
 
@@ -194,24 +218,32 @@ function handleSyncScrollEvent() {
   if (!syncModeActive) return;
   const container = document.getElementById("reader-container");
 
-  // Sync-caused scroll: consume the lock, re-baseline, and do NOT touch
-  // syncUserOffsetPx. Falling through would fold this tick's own delta back
-  // into the offset; since the offset feeds the next tick's target
-  // (delta_n = audioProgress + delta_{n-1}), the reader would accelerate
-  // away from the audio.
+  // Sync-caused scroll: consume the lock, re-baseline, do NOT touch
+  // syncUserOffsetPx (folding it in double-applies each tick's delta and
+  // compounds quadratically).
   if (syncApplyingScroll) {
     syncApplyingScroll = false;
     syncLastKnownScrollTop = container.scrollTop;
+    syncLastKnownScrollHeight = container.scrollHeight;
     return;
   }
 
-  // User scroll: fold movement since the last event into the offset.
-  // lastKnown is re-baselined on BOTH paths, or a user scroll's delta would
-  // also absorb the preceding sync scroll's displacement.
+  // Layout shift, not user input: re-baseline only, drop the event. A pure
+  // user wheel/drag/keyboard scroll never changes scrollHeight.
+  if (syncLastKnownScrollHeight != null && container.scrollHeight !== syncLastKnownScrollHeight) {
+    syncLastKnownScrollTop = container.scrollTop;
+    syncLastKnownScrollHeight = container.scrollHeight;
+    return;
+  }
+
+  // Plain user scroll: fold movement since the last event into the offset.
+  // lastKnown is re-baselined on EVERY path, or a user delta would absorb
+  // displacement that happened since the last baseline.
   if (syncLastKnownScrollTop != null) {
     syncUserOffsetPx += container.scrollTop - syncLastKnownScrollTop;
   }
   syncLastKnownScrollTop = container.scrollTop;
+  syncLastKnownScrollHeight = container.scrollHeight;
 }
 
 // -----------------------------------------------------------------
@@ -223,7 +255,8 @@ function handleSyncScrollEvent() {
  where chapter calibration already auto-opens. Declining leaves the
  current position untouched; this never forces a jump.
 */
-
+/** bookIds already asked "continue reading from your last listening session?" this session. */
+const listeningPromptHandled = new Set();
 /**
  Call after the reader opens for a paired book. If a listening session is
  recorded as more recent than the reader's own last-known position, offers
@@ -233,37 +266,73 @@ function handleSyncScrollEvent() {
 async function promptSyncReadingToAudio(bookId) {
   const audiobook = await getAudiobookForBook(bookId);
   if (!audiobook) return;
+  // Only for the book actually open, and at most once per session - lastMode
+  // stays "listening" until the next pause overwrites it, so without the
+  // guard this re-prompted on every reader open / re-pair / resume.
+  if (!activeBookObject || activeBookObject.id !== bookId) return;
+  if (listeningPromptHandled.has(bookId)) return;
   const position = await getAudioSyncPosition(bookId);
   if (!position || position.lastMode !== "listening") return;
+  listeningPromptHandled.add(bookId);
 
   const confirmed = confirm("Continue reading from your last listening session?");
   if (!confirmed) return;
 
   const scrollTarget = mapChapterToScroll({
-    mode: audiobook.syncMode,
+    mode: audiobook.syncMode || "chapter",
     chapterOffset: resolveChapterOffset(audiobook),
     audioChapterIndex: position.chapterIndex,
-    percentInChapter: position.percentInChapter,
+    percentInChapter: position.percentInChapter ?? 0,
     audiobook: audiobook,
-    chapterWordCounts: activeBookObject?.chapterWordCounts || [],
-    totalWords: activeBookObject?.totalWords || 0,
+    chapterWordCounts: activeBookObject.chapterWordCounts || [],
+    totalWords: activeBookObject.totalWords || 0,
     wholeBookOffset: audiobook.wholeBookOffset || 0,
   });
 
+  // Mapper contract: null = unmappable (whole mode with no word data etc.).
+  // Used to deref .epubSpineIndex straight off it and throw.
+  if (!scrollTarget) {
+    console.warn("[sync-prompt] listening->reading: position unmappable, skipping jump");
+    return;
+  }
   if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return;
 
   activeSpinePointer = scrollTarget.epubSpineIndex;
   await renderActiveChapterFromZip(activeZipInstance);
+  // Fresh renders drop inline typography (stepToNextChapter re-applies for
+  // the same reason after every render).
+  if (typeof saveAndApplyUserStyles === "function") saveAndApplyUserStyles();
+
+  // A fresh deliberate jump - a stale user offset from the old chapter must
+  // not skew the landing spot.
+  syncUserOffsetPx = 0;
+
   const container = document.getElementById("reader-container");
-  const maxScroll = container.scrollHeight - container.clientHeight;
-  container.scrollTop = scrollTarget.innerPct * maxScroll;
+  const banner = document.getElementById("chapter-end-action-banner");
+  const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight - (banner ? banner.offsetHeight : 0));
+  container.scrollTop = Math.max(0, Math.min(maxScroll, scrollTarget.innerPct * maxScroll));
+  trackReadingProgress();
 }
 
 /**
  Call after audio finishes loading (pair, resume) for a paired book. If a
  reading session is recorded as more recent than the audio's own position,
  offers to seek audio to that spot.
- @param {number} bookId - id of the book whose audio just loaded.
+
+ The stored reading position (chapterIndex = EPUB spine, percentInChapter =
+ scroll fraction) is mode-independent; syncMode only decides how it projects
+ onto the audio timeline. Chapter mode projects spine ± chapterOffset and
+ needs no EPUB data. Whole mode projects a word-weighted whole-book fraction
+ and therefore REQUIRES this specific book's word counts - resolved via
+ resolveWordCountData() (active reader if it's this book, else the DB
+ record), never from activeBookObject blindly: with no/different book open
+ that used to feed empty or wrong chapter lengths into cumulativeWordPct(),
+ whose degenerate fallback divides by 1 and clamps to 1 - seeking the audio
+ to the literal end of the file. If syncMode was never selected, falls back
+ to "chapter"/offset 0, matching the live loop's default.
+
+ Every result is validated and verified by round-tripping through the
+ forward mapping; any garbage refuses the seek instead of jumping blindly.
 */
 async function promptSyncAudioToReading(bookId) {
   const audiobook = await getAudiobookForBook(bookId);
@@ -271,20 +340,88 @@ async function promptSyncAudioToReading(bookId) {
   const position = await getAudioSyncPosition(bookId);
   if (!position || position.lastMode !== "reading") return;
 
+  const mode = audiobook.syncMode || "chapter";
+  const spineIndex = position.chapterIndex;
+  const innerPct = position.percentInChapter ?? 0;
+
+  if (!Number.isInteger(spineIndex) || spineIndex < 0) return;
+
+  // Whole mode needs THIS book's word data before we can promise a sane
+  // seek; a stale spine index past the book's real chapter count (re-paired
+  // EPUB) can't be mapped either. Both cases skip the prompt entirely
+  // rather than ask and then refuse.
+  let wordData = null;
+  if (mode === "whole") {
+    wordData = await resolveWordCountData(bookId);
+    if (!wordData) {
+      console.warn("[sync-prompt] whole mode: no chapter word counts for book", bookId,
+        "- can't map reading position to audio, skipping jump");
+      return;
+    }
+    if (spineIndex >= wordData.chapterCount) {
+      console.warn("[sync-prompt] stored reading position", spineIndex,
+        "is past this book's", wordData.chapterCount, "chapters - stale record, skipping");
+      return;
+    }
+  }
+
   const confirmed = confirm("Jump audio to your last reading session?");
   if (!confirmed) return;
 
-  const chapterPos = mapScrollToChapter({
-    mode: audiobook.syncMode,
+  const mappingInput = {
+    mode,
     chapterOffset: resolveChapterOffset(audiobook),
-    epubSpineIndex: position.chapterIndex,
-    innerPct: position.percentInChapter,
-    audiobook: audiobook,
-    chapterWordCounts: activeBookObject?.chapterWordCounts || [],
-    totalWords: activeBookObject?.totalWords || 0,
+    epubSpineIndex: spineIndex,
+    innerPct,
+    audiobook,
+    chapterWordCounts: wordData ? wordData.chapterWordCounts : [],
+    totalWords: wordData ? wordData.totalWords : 0,
     wholeBookOffset: audiobook.wholeBookOffset || 0,
-  });
+  };
 
-  const seconds = chapterPositionToSeconds(audiobook.chapters, chapterPos.audioChapterIndex, chapterPos.percentInChapter);
-  if (seconds != null) seekAudio(seconds);
+  const chapterPos = mapScrollToChapter(mappingInput);
+  if (!chapterPos || !Number.isFinite(chapterPos.audioChapterIndex)) {
+    console.warn("[sync-prompt] mapScrollToChapter returned no usable position:", chapterPos);
+    return;
+  }
+
+  // Round-trip guard: feed the result back through the FORWARD mapping (the
+  // one the live loop exercises every tick). With correct inputs this is
+  // exact up to fp noise; a mismatch means something upstream is lying.
+  // Known false-positive: whole-mode seeks that legitimately clamp to the
+  // very start/end of the audio because wholeBookOffset pushes the fraction
+  // past the edge - rare, and refusing those is an acceptable trade for
+  // never seeking on garbage.
+  const roundTrip = mapChapterToScroll({
+    ...mappingInput,
+    audioChapterIndex: chapterPos.audioChapterIndex,
+    percentInChapter: chapterPos.percentInChapter,
+  });
+  const spineOk = roundTrip && Math.abs(roundTrip.epubSpineIndex - spineIndex) <= 1;
+  const pctOk = roundTrip && Math.abs((roundTrip.innerPct ?? 0) - innerPct) <= 0.1;
+  if (!spineOk || !pctOk) {
+    console.warn("[sync-prompt] mapping failed round-trip check - not seeking.",
+      { requested: { spineIndex, innerPct }, mapped: chapterPos, roundTrip, mode });
+    return;
+  }
+
+  let seconds = chapterPositionToSeconds(audiobook.chapters, chapterPos.audioChapterIndex, chapterPos.percentInChapter);
+
+  // NaN is not null: a bare `seconds != null` check happily passes NaN into
+  // seekAudio (currentTime = NaN throws / wedges playback).
+  if (seconds == null || !Number.isFinite(seconds)) {
+    console.warn("[sync-prompt] chapterPositionToSeconds produced no usable time:", seconds);
+    return;
+  }
+
+  const duration = activeAudioElement.duration;
+  if (Number.isFinite(duration)) seconds = Math.min(Math.max(seconds, 0), duration);
+  else if (seconds < 0) seconds = 0;
+
+  if (SYNC_DEBUG) {
+    console.log("[sync-prompt] mode:", mode, "reading pos:", { spineIndex, innerPct },
+      "-> audio:", chapterPos, "-> seconds:", seconds);
+  }
+
+  seekAudio(seconds);
 }

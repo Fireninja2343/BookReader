@@ -36,14 +36,23 @@ async function pickAudioFile() {
 
   console.log("[24-audio-pairing] falling back to plain <input> - no handle will be available");
   // Fallback for browsers without showOpenFilePicker: a hidden plain input.
+  // FIX: the original resolved only from onchange, so a CANCELLED picker
+  // leaked a forever-pending promise and left handlePairAudiobookClick()
+  // suspended indefinitely. A settle-latch plus the 'cancel' event fixes it.
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".m4b,.m4a,audio/*";
-    input.onchange = () => {
-      const file = input.files[0];
-      resolve(file ? { file, handle: null } : null);
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
     };
+    input.onchange = () => settle(input.files[0] ? { file: input.files[0], handle: null } : null);
+    // 'cancel' on file inputs: Chromium 113+, Firefox 91+, Safari 16.4+.
+    // Older browsers just behave as before (promise stays pending on cancel).
+    input.oncancel = () => settle(null);
     input.click();
   });
 }
@@ -75,7 +84,12 @@ async function pairAudiobookFile(bookId, file, handle) {
  e.g. a "Resume Listening" button click - browsers won't grant this silently)
  and, if granted, returns the live File ready for use.
 
- @returns {Promise<{bookId: number, file: File}|null>} Null if there's no
+ FIX: now also returns the handle itself, so the mismatch-Continue path can
+ re-pair WITHOUT dropping handle-based one-click resume (the old resume flow
+ passed handle: null into showMismatchTable, so accepting a changed file
+ silently downgraded that book to manual re-pick forever).
+
+ @returns {Promise<{bookId: number, file: File, handle: FileSystemFileHandle}|null>} Null if there's no
    eligible book, no stored handle (e.g. unsupported browser or never picked
    with a handle), or permission was denied.
 */
@@ -90,7 +104,7 @@ async function tryAutoResumeAudio() {
     const permission = await audiobook.fileHandle.requestPermission({ mode: "read" });
     if (permission !== "granted") return null;
     const file = await audiobook.fileHandle.getFile();
-    return { bookId, file };
+    return { bookId, file, handle: audiobook.fileHandle };
   } catch (err) {
     // Handle may be stale (file moved/deleted, or a permission API quirk on
     // this browser) - treat as "can't auto-resume", not a hard error.
@@ -132,13 +146,11 @@ function diffAudiobookMetadata(storedRecord, freshMetadata) {
 
   // Duration compared to the nearest second - encodes of "the same" audio
   // can differ by sub-second container overhead without being a real mismatch.
+  // FIX: simplified. The original's conditional expression reduced to exactly
+  // this comparison; same output, no roundabout self-reference.
   const storedDurationRounded = Math.round(storedRecord.duration ?? 0);
   const freshDurationRounded = Math.round(freshMetadata.duration ?? 0);
-  addIfDifferent(
-    "Duration",
-    `${storedDurationRounded}s`,
-    storedDurationRounded === freshDurationRounded ? `${storedDurationRounded}s` : `${freshDurationRounded}s`,
-  );
+  addIfDifferent("Duration", `${storedDurationRounded}s`, `${freshDurationRounded}s`);
 
   const storedChapters = storedRecord.chapters ?? [];
   const freshChapters = freshMetadata.chapters ?? [];
@@ -179,10 +191,74 @@ async function verifyAudioFileAgainstStored(bookId, file) {
  Entry points wired to the pairing panel/modal in index.html. Handles both
  first-time pairing (no stored record - no diff needed) and re-pick/resume
  (diff against stored metadata, show a mismatch table if anything differs).
+
+ FIX: every load path now funnels through activatePairedAudio() below.
+ The four call sites used to hand-roll the load sequence and had already
+ drifted apart (mismatch-Continue never loaded the audio at all; resume
+ never refreshed the pairing cache) - a shared path makes "forgot a step"
+ structurally impossible.
 */
 
 /** Book currently targeted by the pairing panel, set when it's opened. */
 let audioPairingTargetBookId = null;
+
+/**
+ FIX (new): book whose audio is currently loaded into activeAudioElement.
+ Set ONLY by activatePairedAudio() - i.e. only when the audio was loaded
+ through this file's pairing flows. Guards every "does the loaded audio
+ belong to the book I'm acting on?" check. Without it, the old code checked
+ merely "does ANY audio exist", so opening book B's panel while book A's
+ audio was loaded would seek A's audio to B's reading position
+ (promptSyncAudioToReading seeks whatever activeAudioElement holds).
+*/
+let activeAudioBookId = null;
+
+/**
+ FIX (new): bookIds whose "jump audio to your last reading session?" prompt
+ was already handled this session. The stored lastMode stays "reading" until
+ the next pause overwrites it, so without this the prompt re-fired on every
+ panel open and every re-pair/resume of the same book.
+*/
+const syncPromptHandled = new Set();
+
+let cachedAudioDisplayBook = null;
+/**
+ FIX (new): central "audio is now loaded and usable for bookId" path.
+ Wires up the player, restores the file's own last position, offers the
+ cross-mode jump, refreshes caches. Every load entry point goes through
+ this so none can forget a step - handleMismatchContinue() used to pair
+ the file but never call loadM4bAudio(), leaving the player holding the
+ previous file (or nothing).
+
+ @param {number} bookId
+ @param {File} file
+*/
+async function activatePairedAudio(bookId, file) {
+  loadM4bAudio(file);
+  attachAudioPositionDisplay(bookId);
+  activeAudioBookId = bookId;
+  document.getElementById("audio-pairing-transport").style.display = "flex";
+  await restoreOwnListeningPosition(bookId);
+  await maybePromptSyncAudioToReading(bookId);
+  refreshActiveBookAudioPairingCache(bookId);
+  const audiobook = await getAudiobookForBook(bookId);
+  cachedAudioDisplayBook = { bookId, audiobook };
+}
+
+/**
+ FIX (new): promptSyncAudioToReading() wrapper with the guards the raw call
+ sites lacked:
+ - Only prompts when the loaded audio belongs to THIS book (activeAudioBookId).
+ - At most once per book per session (syncPromptHandled).
+ Safe to call from any pairing entry point; silently no-ops otherwise.
+ @param {number} bookId
+*/
+async function maybePromptSyncAudioToReading(bookId) {
+  if (!activeAudioElement || activeAudioBookId !== bookId) return;
+  if (syncPromptHandled.has(bookId)) return;
+  syncPromptHandled.add(bookId);
+  await promptSyncAudioToReading(bookId);
+}
 
 /**
  Opens the pairing panel for a given book and shows its current pairing
@@ -195,9 +271,11 @@ async function openAudioPairingPanel(bookId) {
   const statusEl = document.getElementById("audio-pairing-status");
   panel.style.display = "flex";
 
-  // Reset transport visibility unless audio is already loaded.
+  // FIX: ownership-aware transport visibility. The old check was
+  // "any audio is loaded", which showed book A's transport inside book B's
+  // pairing panel when A's audio happened to be the loaded one.
   document.getElementById("audio-pairing-transport").style.display =
-    activeAudioElement ? "flex" : "none";
+    activeAudioElement && activeAudioBookId === bookId ? "flex" : "none";
 
   const existing = await getAudiobookForBook(bookId);
   statusEl.textContent = existing
@@ -236,9 +314,10 @@ async function openAudioPairingPanel(bookId) {
   }
   // ---------------------------------------------------------
 
-  if (activeAudioElement && existing) {
-    await promptSyncAudioToReading(bookId);
-  }
+  // FIX: was `if (activeAudioElement && existing) promptSyncAudioToReading(bookId)`
+  // - the wrong-book seek described on activeAudioBookId, plus re-prompt spam.
+  // The wrapper checks ownership and once-per-session.
+  await maybePromptSyncAudioToReading(bookId);
 }
 
 function closeAudioPairingPanel() {
@@ -249,46 +328,41 @@ function closeAudioPairingPanel() {
 /**
  "Pair Audiobook" button handler. Picks a file and either pairs it directly
  (no stored record yet) or runs the mismatch check first (re-pairing over
- an existing record).
+ an existing record). FIX: both branches now collapse to pairAudiobookFile()
+ + activatePairedAudio() + calibration, instead of two hand-rolled copies
+ of the load sequence (the source of the mismatch-Continue bug).
 */
 async function handlePairAudiobookClick() {
   if (audioPairingTargetBookId == null) return;
+  const bookId = audioPairingTargetBookId;
   const picked = await pickAudioFile();
   if (!picked) return;
 
-  const existing = await getAudiobookForBook(audioPairingTargetBookId);
-  if (!existing) {
-    const metadata = await pairAudiobookFile(audioPairingTargetBookId, picked.file, picked.handle);
-    document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
-    loadM4bAudio(picked.file);
-    attachAudioPositionDisplay(audioPairingTargetBookId);
-    document.getElementById("audio-pairing-transport").style.display = "flex";
-    openCalibrationModal(audioPairingTargetBookId);
-    promptSyncAudioToReading(audioPairingTargetBookId);
-    refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
-    return;
+  const existing = await getAudiobookForBook(bookId);
+  if (existing) {
+    const { mismatches } = await verifyAudioFileAgainstStored(bookId, picked.file);
+    if (mismatches.length > 0) {
+      showMismatchTable(mismatches, picked);
+      return;
+    }
   }
 
-  const { mismatches } = await verifyAudioFileAgainstStored(audioPairingTargetBookId, picked.file);
-  if (mismatches.length === 0) {
-    const metadata = await pairAudiobookFile(audioPairingTargetBookId, picked.file, picked.handle);
-    document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
-    loadM4bAudio(picked.file);
-    attachAudioPositionDisplay(audioPairingTargetBookId);
-    document.getElementById("audio-pairing-transport").style.display = "flex";
-    openCalibrationModal(audioPairingTargetBookId);
-    promptSyncAudioToReading(audioPairingTargetBookId);
-    refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
-  } else {
-    showMismatchTable(mismatches, picked);
-  }
+  const metadata = await pairAudiobookFile(bookId, picked.file, picked.handle);
+  document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? picked.file.name}`;
+  await activatePairedAudio(bookId, picked.file);
+  // Calibration opens AFTER the jump prompt (prompt runs inside
+  // activatePairedAudio) so the user decides the jump before the
+  // calibration UI covers the screen.
+  openCalibrationModal(bookId);
 }
 
 /**
  "Resume Listening" button handler - the one user-gesture click required to
  re-request permission on a stored file handle. Runs the same mismatch
  check as a manual re-pick, since the file on disk could have changed since
- it was last paired.
+ it was last paired. FIX: goes through activatePairedAudio() (the old copy
+ never refreshed the pairing cache) and passes the handle through to the
+ mismatch table so Continue keeps one-click resume working.
 */
 async function handleResumeListeningClick() {
   const resumed = await tryAutoResumeAudio();
@@ -301,13 +375,10 @@ async function handleResumeListeningClick() {
   const { mismatches } = await verifyAudioFileAgainstStored(resumed.bookId, resumed.file);
   if (mismatches.length === 0) {
     document.getElementById("audio-pairing-status").textContent = "Resumed, metadata matches.";
-    loadM4bAudio(resumed.file);
-    attachAudioPositionDisplay(resumed.bookId);
-    document.getElementById("audio-pairing-transport").style.display = "flex";
-    await restoreOwnListeningPosition(resumed.bookId);
-    promptSyncAudioToReading(resumed.bookId);
+    await activatePairedAudio(resumed.bookId, resumed.file);
   } else {
-    showMismatchTable(mismatches, { file: resumed.file, handle: null });
+    // Handle passed through so mismatch-Continue re-pairs with the handle intact.
+    showMismatchTable(mismatches, { file: resumed.file, handle: resumed.handle ?? null });
   }
 }
 
@@ -340,19 +411,21 @@ function closeMismatchModal() {
   pendingMismatchFile = null;
 }
 
-/** "Continue" - accepts the fresh file/metadata as the new paired truth. */
+/** "Continue" - accepts the fresh file/metadata as the new paired truth.
+    FIX: actually loads the accepted file now (via activatePairedAudio).
+    The old version paired the record but never called loadM4bAudio(), so
+    accepting a mismatched file left the player playing whatever was loaded
+    before - or nothing. */
 async function handleMismatchContinue() {
   if (!pendingMismatchFile || audioPairingTargetBookId == null) return;
-  const metadata = await pairAudiobookFile(
-    audioPairingTargetBookId,
-    pendingMismatchFile.file,
-    pendingMismatchFile.handle,
-  );
-  document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? pendingMismatchFile.file.name}`;
+  const bookId = audioPairingTargetBookId;
+  const file = pendingMismatchFile.file;
+  const handle = pendingMismatchFile.handle;
+  const metadata = await pairAudiobookFile(bookId, file, handle);
+  document.getElementById("audio-pairing-status").textContent = `Paired: ${metadata.title ?? file.name}`;
   closeMismatchModal();
-  openCalibrationModal(audioPairingTargetBookId);
-  promptSyncAudioToReading(audioPairingTargetBookId);
-    refreshActiveBookAudioPairingCache(audioPairingTargetBookId);
+  await activatePairedAudio(bookId, file);
+  openCalibrationModal(bookId);
 }
 
 /** "Choose Different File" - discards this pick, re-opens the file picker. */
@@ -377,6 +450,16 @@ async function handleMismatchChooseDifferent() {
  *current* chapter, 0-1. For EPUB this is exactly innerPct as already
  computed by trackReadingProgress() (10-reader-controls.js); for audio it's
  (currentTime - chapterStartSec) / (chapterEndSec - chapterStartSec).
+
+ CONTRACT FIX: both mappers can now return NULL when the input can't be
+ mapped (missing chapter data, non-positive duration, NaN anywhere). The
+ old failure modes produced concrete garbage positions instead - chapter 0
+ top-of-book for the forward direction (slamming the reader to the start
+ every sync tick), or NaN leaking past the Math.min/Math.max clamp idiom
+ (which passes NaN straight through) into scrollBy()/seekAudio(). EVERY
+ caller of mapChapterToScroll/mapScrollToChapter must null-check - known
+ call sites to audit: computeSyncStepPx() and the mode-switch prompts in
+ 25-audio-sync.js, trackReadingProgress() in 10-reader-controls.js.
 */
 
 /**
@@ -388,21 +471,30 @@ async function handleMismatchChooseDifferent() {
  @param {number} params.audioChapterIndex - Audio chapter index.
  @param {number} params.percentInChapter - 0-1 within that audio chapter.
  @param {Object} params.audiobook - Full audiobook record (for duration/chapters).
- @param {number[]} params.chapterWordCounts - EPUB per‑chapter word counts.
+ @param {number[]} params.chapterWordCounts - EPUB per-chapter word counts.
  @param {number} params.totalWords - EPUB total words.
  @param {number} params.wholeBookOffset - Fractional offset for "whole" mode.
- @returns {{epubSpineIndex: number, innerPct: number}}
+ @returns {{epubSpineIndex: number, innerPct: number}|null} Null when the
+   position is unmappable (no chapter data, non-positive duration, or NaN
+   input) - callers MUST handle null as "sit this tick out", never as
+   chapter 0.
 */
 function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInChapter, audiobook, chapterWordCounts, totalWords, wholeBookOffset }) {
   if (mode === "whole") {
-    const chapter = audiobook.chapters[audioChapterIndex];
-    if (!chapter) return { epubSpineIndex: 0, innerPct: 0 };
+    const chapter = audiobook.chapters?.[audioChapterIndex];
+    // FIX: was `if (!chapter) return { epubSpineIndex: 0, innerPct: 0 }` -
+    // out-of-range audio chapters made the live loop yank the reader to
+    // chapter 0 and HOLD it there every tick. Also guards duration<=0 and
+    // NaN: `Math.min(1, Math.max(0, NaN))` is NaN, not 0 or 1, so the old
+    // clamp idiom let NaN flow into the scroll target.
+    if (!chapter || !(audiobook.duration > 0)) return null;
     const chapterDuration = chapter.endSec - chapter.startSec;
     const audioPct = (chapter.startSec + percentInChapter * chapterDuration) / audiobook.duration;
+    if (!Number.isFinite(audioPct)) return null;
     const epubPct = Math.min(1, Math.max(0, audioPct + wholeBookOffset));
     return findEpubChapterForPct(epubPct, chapterWordCounts, totalWords);
   } else {
-    // Legacy chapter‑offset mode
+    // Legacy chapter-offset mode
     return {
       epubSpineIndex: audioChapterIndex + chapterOffset,
       innerPct: Math.min(1, Math.max(0, percentInChapter)),
@@ -419,13 +511,17 @@ function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInC
  @param {number} params.epubSpineIndex - EPUB chapter index.
  @param {number} params.innerPct - 0-1 within that EPUB chapter.
  @param {Object} params.audiobook - Full audiobook record.
- @param {number[]} params.chapterWordCounts - EPUB per‑chapter word counts.
+ @param {number[]} params.chapterWordCounts - EPUB per-chapter word counts.
  @param {number} params.totalWords - EPUB total words.
  @param {number} params.wholeBookOffset - Fractional offset for "whole" mode.
- @returns {{audioChapterIndex: number, percentInChapter: number}}
+ @returns {{audioChapterIndex: number, percentInChapter: number}|null} Null when
+   unmappable (same contract as mapChapterToScroll).
 */
 function mapScrollToChapter({ mode, chapterOffset, epubSpineIndex, innerPct, audiobook, chapterWordCounts, totalWords, wholeBookOffset }) {
   if (mode === "whole") {
+    // FIX: mirror of the forward guard - no chapters or no duration must
+    // return null rather than produce NaN/garbage seconds.
+    if (!audiobook.chapters?.length || !(audiobook.duration > 0)) return null;
     const epubPct = cumulativeWordPct(epubSpineIndex, innerPct, chapterWordCounts, totalWords);
     const audioPct = Math.min(1, Math.max(0, epubPct - wholeBookOffset));
     const seconds = audioPct * audiobook.duration;
@@ -437,20 +533,25 @@ function mapScrollToChapter({ mode, chapterOffset, epubSpineIndex, innerPct, aud
     };
   }
 }
+
 /**
  Resolves an audio chapter position to an absolute seek time in seconds,
  using the audiobook's actual chapter boundaries (not just the offset math -
  this is where percentInChapter gets multiplied out against a real chapter's
  duration).
 
+ FIX: NaN percentInChapter now returns null instead of NaN. NaN != null, so
+ the old contract let NaN slip past every `!= null` check into seekAudio()
+ (currentTime = NaN throws / wedges playback).
+
  @param {Array<{startSec: number, endSec: number}>} chapters - Audiobook chapters array.
  @param {number} audioChapterIndex - 0-indexed chapter to resolve.
  @param {number} percentInChapter - 0-1, how far through that chapter.
- @returns {number|null} Absolute seconds to seek to, or null if audioChapterIndex is out of range.
+ @returns {number|null} Absolute seconds to seek to, or null if audioChapterIndex is out of range or input is not finite.
 */
 function chapterPositionToSeconds(chapters, audioChapterIndex, percentInChapter) {
   const chapter = chapters?.[audioChapterIndex];
-  if (!chapter) return null;
+  if (!chapter || !Number.isFinite(percentInChapter)) return null;
   const duration = chapter.endSec - chapter.startSec;
   return chapter.startSec + percentInChapter * duration;
 }
@@ -461,13 +562,17 @@ function chapterPositionToSeconds(chapters, audioChapterIndex, percentInChapter)
  chapter counts are small (tens, not thousands), so this is cheap enough to
  call on every sync-loop tick without needing a smarter lookup.
 
+ FIX: NaN/Infinity currentTimeSec now returns null. It used to fall through
+ findIndex into the last-chapter fallback and come back with
+ percentInChapter: NaN - which then flowed into the mapping and clamps.
+
  @param {Array<{startSec: number, endSec: number}>} chapters - Audiobook chapters array.
  @param {number} currentTimeSec - Absolute playback position in seconds.
  @returns {{audioChapterIndex: number, percentInChapter: number}|null} Null if
-   currentTimeSec falls outside every chapter (e.g. empty chapters array).
+   currentTimeSec falls outside every chapter (e.g. empty chapters array) or is not finite.
 */
 function secondsToChapterPosition(chapters, currentTimeSec) {
-  if (!chapters || chapters.length === 0) return null;
+  if (!chapters || chapters.length === 0 || !Number.isFinite(currentTimeSec)) return null;
   const idx = chapters.findIndex((ch) => currentTimeSec >= ch.startSec && currentTimeSec < ch.endSec);
   // Falls through to the last chapter if currentTimeSec is at/past the very
   // end of the book (findIndex misses because endSec is an exclusive bound).
@@ -483,16 +588,65 @@ function secondsToChapterPosition(chapters, currentTimeSec) {
 // -----------------------------------------------------------------
 
 /**
+ Resolves the EPUB word-count data that whole-mode mapping needs, for ONE
+ specific book. FIX (new): whole-book percentage math is only meaningful
+ against that book's own chapter lengths, and callers used to feed it
+ `activeBookObject?.chapterWordCounts || []` blindly - with the wrong book
+ open (or none), the empty-data fallback below divided by 1 and clamped to
+ 1, i.e. "end of the book". Preference: the live reader's object when it IS
+ this book (freshest, matches what the sync loop uses), else the persisted
+ book record - the same fallback pattern updateWholeBookCalibrationDisplay()
+ already uses.
+
+ @param {number} bookId
+ @returns {Promise<{chapterWordCounts: number[], totalWords: number, chapterCount: number}|null>}
+   Null when the book has no usable word data at all.
+*/
+async function resolveWordCountData(bookId) {
+  let counts = null;
+  let storedTotal = 0;
+
+  if (activeBookObject && activeBookObject.id === bookId &&
+      Array.isArray(activeBookObject.chapterWordCounts) && activeBookObject.chapterWordCounts.length) {
+    counts = activeBookObject.chapterWordCounts;
+    storedTotal = activeBookObject.totalWords || 0;
+  } else {
+    const bookRecord = await getBookById(bookId);
+    if (bookRecord && Array.isArray(bookRecord.chapterWordCounts) && bookRecord.chapterWordCounts.length) {
+      counts = bookRecord.chapterWordCounts;
+      storedTotal = bookRecord.totalWords || 0;
+    }
+  }
+
+  if (!counts) return null;
+  // Derive the total from the counts themselves - a stored totalWords can be
+  // missing or stale after a re-import, and the array is what the mapping
+  // actually walks.
+  return {
+    chapterWordCounts: counts,
+    totalWords: storedTotal || counts.reduce((a, b) => a + b, 0),
+    chapterCount: counts.length,
+  };
+}
+
+/**
  Computes the cumulative word percentage for a given EPUB spine position.
  @param {number} spineIndex - 0-indexed chapter index.
  @param {number} innerPct - 0-1 scroll fraction within that chapter.
- @param {number[]} chapterWordCounts - Per‑chapter word counts.
+ @param {number[]} chapterWordCounts - Per-chapter word counts.
  @param {number} totalWords - Sum of chapterWordCounts.
  @returns {number} 0-1 fraction of total words.
 */
 function cumulativeWordPct(spineIndex, innerPct, chapterWordCounts, totalWords) {
+  // FIX: negative spineIndex used to slice from the END of the array
+  // (slice(0, -1)) and return nonsense. All current callers pass >= 0, but
+  // this is a pure function - clamp instead of leaving a landmine.
+  if (spineIndex < 0) return 0;
   if (!chapterWordCounts || chapterWordCounts.length === 0 || totalWords === 0) {
     // Fallback: treat chapters as equal length
+    // (Callers that can't tolerate this degenerate fallback - sync seeks,
+    // jump prompts - must resolve word data via resolveWordCountData() first
+    // and refuse to map when it returns null.)
     const n = Math.max(1, chapterWordCounts?.length || 1);
     return (spineIndex + innerPct) / n;
   }
@@ -502,9 +656,9 @@ function cumulativeWordPct(spineIndex, innerPct, chapterWordCounts, totalWords) 
 }
 
 /**
- Finds the EPUB chapter and inner percentage for a given whole‑book percentage.
- @param {number} pct - 0-1 whole‑book fraction.
- @param {number[]} chapterWordCounts - Per‑chapter word counts.
+ Finds the EPUB chapter and inner percentage for a given whole-book percentage.
+ @param {number} pct - 0-1 whole-book fraction.
+ @param {number[]} chapterWordCounts - Per-chapter word counts.
  @param {number} totalWords - Sum of chapterWordCounts.
  @returns {{epubSpineIndex: number, innerPct: number}}
 */
@@ -520,13 +674,18 @@ function findEpubChapterForPct(pct, chapterWordCounts, totalWords) {
     const wordCount = chapterWordCounts[i];
     if (pct * totalWords < cumulative + wordCount || i === chapterWordCounts.length - 1) {
       const before = cumulative;
-      const inChapter = (pct * totalWords - before) / wordCount;
+      // FIX: zero-word chapters (empty spine items - covers, nav pages) made
+      // this 0/0 = NaN when pct landed on them (e.g. pct=1 with a zero-word
+      // final chapter forced entry via the last-chapter clause). NaN then
+      // survived the clamp below and reached the reader's scroll target.
+      const inChapter = wordCount > 0 ? (pct * totalWords - before) / wordCount : 0;
       return { epubSpineIndex: i, innerPct: Math.min(1, Math.max(0, inChapter)) };
     }
     cumulative += wordCount;
   }
   return { epubSpineIndex: chapterWordCounts.length - 1, innerPct: 1 };
 }
+
 // -----------------------------------------------------------------
 // CHAPTER CALIBRATION
 // -----------------------------------------------------------------
@@ -640,7 +799,7 @@ let calibrationWholeAudioPct = null;
 let calibrationWholeTargetBookId = null;
 
 /**
- Opens the whole‑book calibration UI inside the pairing panel.
+ Opens the whole-book calibration UI inside the pairing panel.
  Reads current positions from the active reader and audio.
 */
 async function openWholeBookCalibration() {
@@ -672,7 +831,11 @@ async function updateWholeBookCalibrationDisplay() {
     const totalWords = activeBookObject.totalWords || 0;
     const chapterWordCounts = activeBookObject.chapterWordCounts || [];
     const container = document.getElementById("reader-container");
-    const innerPct = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
+    // FIX: `x / 0 || 0` does NOT yield 0 - it yields Infinity (truthy), so a
+    // chapter too short to scroll displayed "Infinity%" and could be
+    // calibrated from. Guard the divisor instead.
+    const maxScroll = container ? container.scrollHeight - container.clientHeight : 0;
+    const innerPct = maxScroll > 0 ? container.scrollTop / maxScroll : 0;
     epubPct = cumulativeWordPct(activeSpinePointer, innerPct, chapterWordCounts, totalWords);
   } else {
     // Fallback: read from stored record
@@ -703,7 +866,13 @@ async function updateWholeBookCalibrationDisplay() {
 }
 
 /**
- Sets the EPUB reference percentage for whole‑book calibration.
+ Sets the EPUB reference percentage for whole-book calibration.
+ FIX: reads the LIVE reader position when this book is open (the same source
+ updateWholeBookCalibrationDisplay() shows) instead of unconditionally using
+ the persisted record - the on-screen percentage and the calibrated value
+ used to come from different sources, baking any un-persisted scroll into
+ wholeBookOffset. Falls back to the stored record when the book isn't open,
+ which is what makes calibrating from the library view work at all.
 */
 async function setWholeCalibrationEpub() {
   if (!audioPairingTargetBookId) return;
@@ -714,26 +883,36 @@ async function setWholeCalibrationEpub() {
     return;
   }
 
-  // Fetch the EPUB book record from IndexedDB
-  const bookRecord = await getBookById(bookId);
-  if (!bookRecord) {
-    alert("Book record not found.");
-    return;
+  let spineIndex;
+  let innerPct;
+  const totalWords = activeBookObject?.totalWords || 0;
+  const chapterWordCounts = activeBookObject?.chapterWordCounts || [];
+
+  if (activeBookObject && activeBookObject.id === bookId && chapterWordCounts.length) {
+    // Live reader - same source the display above shows.
+    const container = document.getElementById("reader-container");
+    const maxScroll = container ? container.scrollHeight - container.clientHeight : 0;
+    spineIndex = activeSpinePointer;
+    innerPct = maxScroll > 0 ? container.scrollTop / maxScroll : 0;
+  } else {
+    const bookRecord = await getBookById(bookId);
+    if (!bookRecord) {
+      alert("Book record not found.");
+      return;
+    }
+    spineIndex = bookRecord.currentChapter || 0;
+    innerPct = bookRecord.scrollOffset || 0;
   }
 
-  const totalWords = bookRecord.totalWords || 0;
-  const chapterWordCounts = bookRecord.chapterWordCounts || [];
-  const currentChapter = bookRecord.currentChapter || 0;
-  const scrollOffset = bookRecord.scrollOffset || 0; // innerPct
-
-  // Compute whole‑book percentage from stored data
-  calibrationWholeEpubPct = cumulativeWordPct(currentChapter, scrollOffset, chapterWordCounts, totalWords);
-  document.getElementById("whole-calibration-status").textContent += " EPUB reference set.";
+  calibrationWholeEpubPct = cumulativeWordPct(spineIndex, innerPct, chapterWordCounts, totalWords);
+  // Assignment, not +=: chained concatenation grew this status line
+  // unboundedly across repeated set/save clicks.
+  document.getElementById("whole-calibration-status").textContent = "EPUB reference set.";
   checkWholeCalibrationReady();
 }
 
 /**
- Sets the Audio reference percentage for whole‑book calibration.
+ Sets the Audio reference percentage for whole-book calibration.
 */
 async function setWholeCalibrationAudio() {
   if (!audioPairingTargetBookId) return;
@@ -741,7 +920,7 @@ async function setWholeCalibrationAudio() {
   if (!audiobook) return;
   if (activeAudioElement) {
     calibrationWholeAudioPct = activeAudioElement.currentTime / audiobook.duration;
-    document.getElementById("whole-calibration-status").textContent += " Audio reference set.";
+    document.getElementById("whole-calibration-status").textContent = "Audio reference set.";
   } else {
     alert("Please load and play audio first.");
   }
@@ -751,7 +930,8 @@ async function setWholeCalibrationAudio() {
 function checkWholeCalibrationReady() {
   if (calibrationWholeEpubPct !== null && calibrationWholeAudioPct !== null) {
     document.getElementById("whole-save-offset-btn").disabled = false;
-    document.getElementById("whole-calibration-status").textContent += " Ready to save offset.";
+    document.getElementById("whole-calibration-status").textContent =
+      "EPUB + Audio references set - ready to save offset.";
   }
 }
 
@@ -759,27 +939,36 @@ function checkWholeCalibrationReady() {
  Saves the calculated offset from the two reference points.
 */
 async function saveWholeCalibrationOffset() {
+  if (!audioPairingTargetBookId) return;
   if (calibrationWholeEpubPct === null || calibrationWholeAudioPct === null) return;
   const offset = calibrationWholeEpubPct - calibrationWholeAudioPct;
   await setAudiobookSyncMode(audioPairingTargetBookId, "whole", offset);
   await updateWholeBookCalibrationDisplay();
-  document.getElementById("whole-calibration-status").textContent += ` Offset saved: ${(offset * 100).toFixed(1)}%`;
+  // Assignment, not +=: updateWholeBookCalibrationDisplay() already rewrote
+  // the line above; concatenating onto it accumulated across saves.
+  document.getElementById("whole-calibration-status").textContent = `Offset saved: ${(offset * 100).toFixed(1)}%`;
   calibrationWholeEpubPct = null;
   calibrationWholeAudioPct = null;
   document.getElementById("whole-save-offset-btn").disabled = true;
 }
 
 /**
- Resets the offset to 0.
+ Resets the offset to 0. FIX: added the missing target guard (every neighbor
+ has one; this could run with the panel closed and a stale/null target).
 */
 async function resetWholeCalibrationOffset() {
+  if (!audioPairingTargetBookId) return;
   await setAudiobookSyncMode(audioPairingTargetBookId, "whole", 0);
   await updateWholeBookCalibrationDisplay();
-  document.getElementById("whole-calibration-status").textContent += " Offset reset to 0.";
+  document.getElementById("whole-calibration-status").textContent = "Offset reset to 0.";
 }
 
 /**
  Handler for the sync mode selection buttons (Chapter / Whole).
+ FIX: preserves wholeBookOffset on BOTH transitions. The old code passed 0
+ when switching to "chapter", which (given setAudiobookSyncMode()'s
+ signature) wiped the user's calibrated whole offset on a
+ whole -> chapter -> whole round trip, forcing full recalibration.
 */
 async function selectSyncMode(mode) {
   const bookId = audioPairingTargetBookId;
@@ -787,19 +976,28 @@ async function selectSyncMode(mode) {
   const audiobook = await getAudiobookForBook(bookId);
   if (!audiobook) return;
   if (audiobook.syncMode === mode) return;
-  const offset = mode === "whole" ? (audiobook.wholeBookOffset || 0) : 0;
-  await setAudiobookSyncMode(bookId, mode, offset);
+  await setAudiobookSyncMode(bookId, mode, audiobook.wholeBookOffset || 0);
   openAudioPairingPanel(bookId);
 }
 
 /**
  Saves the calibration: computes chapterOffset from the two selected
  indices and persists it via setAudiobookChapterOffset().
+ FIX: if no sync mode has been picked yet, defaults it to "chapter" - the
+ user just calibrated chapter alignment, and sync refuses to run without a
+ mode, so the saved offset was previously unusable until they also clicked a
+ mode button. An already-set mode is NEVER overridden (calibrating chapters
+ while in "whole" mode must not silently flip the mode).
 */
 async function submitCalibration() {
   if (calibrationSelectedEpubIndex == null || calibrationSelectedAudioIndex == null) return;
+  const bookId = calibrationTargetBookId;
   const offset = calibrationSelectedEpubIndex - calibrationSelectedAudioIndex;
-  await setAudiobookChapterOffset(calibrationTargetBookId, offset);
+  await setAudiobookChapterOffset(bookId, offset);
+  const audiobook = await getAudiobookForBook(bookId);
+  if (audiobook && !audiobook.syncMode) {
+    await setAudiobookSyncMode(bookId, "chapter", audiobook.wholeBookOffset || 0);
+  }
   closeCalibrationModal();
 }
 
@@ -858,7 +1056,9 @@ let activeBookAudioPairingCache = null;
  Refreshes the cache for the book currently open in the reader. Call
  whenever a book opens (launchEpubReader()) or whenever pairing state for
  the active book might have changed (after a fresh pair, mismatch-continue,
- or resume - anywhere pairAudiobookFile() runs for the active book).
+ or resume - anywhere pairAudiobookFile() runs for the active book). All of
+ those now go through activatePairedAudio(), which calls this - call sites
+ can no longer forget it (the resume path used to).
  @param {number} bookId - id of the book to check.
 */
 async function refreshActiveBookAudioPairingCache(bookId) {
@@ -869,10 +1069,10 @@ async function refreshActiveBookAudioPairingCache(bookId) {
 /**
  Restores the audio to its own last recorded listening position (not a
  cross-mode sync - just "continue where this file itself left off"). Called
- right after any successful load, before the cross-mode prompt, so
- resuming a listening session picks up mid-chapter rather than always
- restarting at 0:00. No-op (and no prompt) if no listening position was
- ever recorded.
+ by activatePairedAudio() on every successful load, before the cross-mode
+ prompt, so resuming a listening session picks up mid-chapter rather than
+ always restarting at 0:00. No-op (and no prompt) if no listening position
+ was ever recorded.
 
  @param {number} bookId - id of the book whose audio just loaded.
 */
@@ -882,7 +1082,7 @@ async function restoreOwnListeningPosition(bookId) {
   const position = await getAudioSyncPosition(bookId);
   if (!position) return;
   const seconds = chapterPositionToSeconds(audiobook.chapters, position.chapterIndex, position.percentInChapter);
-  if (seconds != null && seconds > 1) seekAudio(seconds);
+  if (seconds != null && Number.isFinite(seconds) && seconds > 1) seekAudio(seconds);
 }
 
 // -----------------------------------------------------------------
@@ -903,14 +1103,30 @@ async function restoreOwnListeningPosition(bookId) {
 */
 
 /**
+ FIX (new): the currently-attached timeupdate handler. attachAudioPositionDisplay()
+ used to assume "a fresh load means a fresh <audio> element" - an assumption
+ about loadM4bAudio() in 23-audio-player.js. If that ever reuses one element
+ (common), every pair/resume stacked another listener and the STALE closures
+ kept writing the OLD book's chapter readout against the NEW audio's
+ currentTime. Removing the previous handler first is correct under either
+ implementation (removing a foreign handler is a harmless no-op).
+*/
+let audioPositionDisplayHandler = null;
+
+/**
  Attaches the position-display update to the currently loaded audio
- element. Call once per load (after loadM4bAudio()) - safe to call
- repeatedly since a fresh load means a fresh element to attach to anyway.
+ element. Call once per load (activatePairedAudio() does it). Safe to call
+ repeatedly - the previous handler is always removed first, so listeners
+ can never stack regardless of whether loadM4bAudio() reuses the element.
  @param {number} bookId - id of the book whose audio is loaded, for chapter lookups.
 */
 function attachAudioPositionDisplay(bookId) {
   if (!activeAudioElement) return;
-  activeAudioElement.addEventListener("timeupdate", () => updateAudioPositionDisplay(bookId));
+  if (audioPositionDisplayHandler) {
+    activeAudioElement.removeEventListener("timeupdate", audioPositionDisplayHandler);
+  }
+  audioPositionDisplayHandler = () => updateAudioPositionDisplay(bookId);
+  activeAudioElement.addEventListener("timeupdate", audioPositionDisplayHandler);
 }
 
 /**
@@ -947,7 +1163,11 @@ function writeAudioPositionDisplay(ids, chapterPos, audiobook, currentTime) {
 */
 async function updateAudioPositionDisplay(bookId) {
   if (!activeAudioElement) return;
-  const audiobook = await getAudiobookForBook(bookId);
+  let audiobook = cachedAudioDisplayBook?.bookId === bookId ? cachedAudioDisplayBook.audiobook : null;
+  if (!audiobook) {
+      audiobook = await getAudiobookForBook(bookId);
+      cachedAudioDisplayBook = { bookId, audiobook };
+  }
   if (!audiobook) return;
 
   const currentTime = activeAudioElement.currentTime;
@@ -962,10 +1182,11 @@ async function updateAudioPositionDisplay(bookId) {
     chapterPos, audiobook, currentTime,
   );
 }
+
 /**
  Adjusts the offset for the whole book calibration.
- @param {number} delta - The amount to adjust the offset by (positive or negative). 
- */
+ @param {number} delta - The amount to adjust the offset by (positive or negative).
+*/
 async function adjustWholeBookOffset(delta) {
   const bookId = audioPairingTargetBookId;
   if (!bookId) return;

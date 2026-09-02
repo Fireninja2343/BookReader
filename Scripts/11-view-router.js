@@ -105,10 +105,13 @@ function showLibraryState() {
     */
     if (typeof saveTimeToDB === "function") saveTimeToDB();
     if (typeof endReadingSession === "function") endReadingSession("leftReader");
-
+    if (typeof stopReadingAudioSync === "function") stopReadingAudioSync();
+    if (typeof stopScroll === "function") stopScroll();
+    
     activeBookObject = null;
     stopActiveReadingTimer();
     fetchLocalLibrary();
+    
 }
 
 function setupKeyboardListeners() {

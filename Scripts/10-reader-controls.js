@@ -172,7 +172,8 @@ function computeChapterBoundaryPercents() {
     boundaries[n] = 100;
     return boundaries;
 }
-
+let lastAudioSyncPositionWriteAt = 0;
+let audioSyncWriteTimer = null;
 function trackReadingProgress() {
     // If a book failed to parse (or hasn't loaded yet) activeSpineArray can be empty,
     // which would otherwise make chapterWeight = 100 / 0 = Infinity and turn the progress
@@ -269,11 +270,17 @@ function trackReadingProgress() {
         if (typeof activeBookAudioPairingCache !== "undefined"
             && activeBookAudioPairingCache === activeBookObject.id
             && typeof updateAudioSyncPosition === "function") {
-            updateAudioSyncPosition(activeBookObject.id, {
-                chapterIndex: activeSpinePointer,
-                percentInChapter: innerPct,
-                lastMode: "reading",
-            });
+            const now = Date.now();
+            if (chapterHasChangedSinceLastPush || now - lastAudioSyncPositionWriteAt >= 1000) {
+                lastAudioSyncPositionWriteAt = now;
+                updateAudioSyncPosition(activeBookObject.id, {
+                    chapterIndex: activeSpinePointer,
+                    percentInChapter: innerPct,
+                    lastMode: "reading",
+                });
+            }
+            clearTimeout(audioSyncWriteTimer);
+            audioSyncWriteTimer = setTimeout(() => trackReadingProgress(), 1200);
         }
     }
 }
