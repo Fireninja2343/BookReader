@@ -57,56 +57,47 @@
         <div class="nav-group">
             <button id="btn-library" onclick="showLibraryState()">📚 Library</button>
             <button id="btn-last-read" onclick="openLastReadBook()">⏳ Last Read</button>
-            <button id="btn-back-group" onclick="exitGroupView()">
-                ⬅️ Back to Groups
-            </button>
-            <button id="btn-open-book" onclick="openSelectedBook()" class="hidden">
-                📖 Open Selected
-            </button>
+            <button id="btn-back-group" onclick="exitGroupView()">⬅️ Back to Groups</button>
+            <button id="btn-open-book" onclick="openSelectedBook()" class="hidden ui-btn-hidden">📖 Open Selected</button>
             <label for="epub-uploader" class="btn" id="upload-label">➕ Import EPUB</label>
-            <input type="file" id="epub-uploader" accept=".epub"
-             multiple onchange="handleFileImport(event)">
+            <input type="file" id="epub-uploader" accept=".epub" multiple="" onchange="handleFileImport(event)">
             <button id="btn-create-group" onclick="openGroupModal(false)">📁 New Group</button>
             <button id="btn-export-json" onclick="exportLibraryToJSON()">📤 Export Backup</button>
             <button id="btn-import-json" onclick="document.getElementById('backup-picker').click()">📥 Import Backup</button>
             <input type="file" id="backup-picker" accept=".json" onchange="importLibraryFromJSON(event)">
             <button id="btn-library-settings" onclick="openSettingsPanel('library')">⚙️ Settings</button>
         </div>
-        
         <div class="nav-group" id="reader-controls">
             <button id="btn-toggle-toc" onclick="toggleSidebar('toc-sidebar')">📖 Contents</button>
             <button id="btn-reader-settings" onclick="openSettingsPanel('reader')">⚙️ Settings</button>
             <button id="btn-toggle-scroll" onclick="toggleScroll();">Toggle Scroll</button>
             <div id="scroll-bar"><div id="fill"></div></div>
-            <button id="btn-prev-chapter" onclick="stepToPrevChapter()" >⏮️ Previous Chapter</button>
-            <button id="btn-next-chapter" onclick="stepToNextChapter()" >Next Chapter ⏭️</button>
+            <button id="btn-prev-chapter" onclick="stepToPrevChapter()">⏮️ Previous Chapter</button>
+            <button id="btn-next-chapter" onclick="stepToNextChapter()">Next Chapter ⏭️</button>
             <button id="pause-tracking" onclick="pauseActiveReadingTimer()" style="display:inline-block;">Pause ⏱️ Tracking</button>
             <button id="unpause-tracking" onclick="pauseActiveReadingTimer(false)" style="display:none;">Unpause ⏱️ Tracking</button>
         </div>
-            <button id="btn-global-stats" onclick="showStatsViewState()">📊 Stats</button>
-            <button id="btn-global-notes" onclick="showNotesViewState()">🗒️ Notes</button>
-
+            <button id="btn-global-stats" onclick="showStatsViewState()" style="margin: .2vw; margin-right: 0;">📊 Stats</button>
+            <button id="btn-global-notes" onclick="showNotesViewState()" style="margin: .2vw;">🗒️ Notes</button>
         <div class="nav-group">
             <span id="current-book-indicator"></span>
             <span id="current-group-indicator"></span>
-
             <select id="library-view-mode" onchange="changeLibraryViewMode(this.value)">
-                <option value="grouped">View: Groups & Unassigned</option>
+                <option value="grouped">View: Groups &amp; Unassigned</option>
                 <option value="all">View: All Books (Flat List)</option>
             </select>
-
             <select id="sort-selector" onchange="sortLibrary()">
                 <option value="manual">Manual Order</option>
                 <option value="alpha">Alphabetical</option>
                 <option value="date">Date Imported</option>
             </select>
-            <select id="theme-selector" onchange="changeActiveTheme(this.value)">
+            <select id="theme-selector" onchange="changeActiveTheme(this.value)" class="ui-btn-hidden">
                 <option value="dark">Dark Theme</option>
                 <option value="oled">OLED Black</option>
                 <option value="sepia">Warm Sepia</option>
             </select>
         </div>
-    </header> 
+    </header>
     <div id="audio-pairing-panel" class="custom-modal" style="display: none; width:auto;">
         <div class="modal-box">
             <h3>Pair Audiobook</h3>

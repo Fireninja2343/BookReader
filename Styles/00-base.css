@@ -97,7 +97,7 @@ body {
 
 /* Top Navbar / Controls */
 header {
-    min-height: 50px;
+    min-height: 6vh;
     background-color: var(--bg-sidebar);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -122,7 +122,7 @@ button.active:hover{
 .nav-group {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: .4vw;
     white-space: nowrap;
 }
 
@@ -140,6 +140,10 @@ button.active:hover{
     font-weight: 600;
     color: var(--group-tint, var(--accent));
     display: none;
+}
+
+.nav-group button, label.btn {
+    font-size: calc(.9vw + 1px);
 }
 
 button, label.btn {
@@ -160,7 +164,7 @@ button:hover, label.btn:hover {
 }
 
 #pause-tracking, #unpause-tracking{
-    font-size: 13px;
+    font-size: 1vw;
     padding: 4px 3px;
 }
 

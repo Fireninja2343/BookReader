@@ -87,6 +87,10 @@
         gap: 2px;
     }
 
+    .nav-group button, label.btn {
+        font-size: 1.025vw;
+    }
+
     button, label.btn, select {
         font-size: 11px;
         padding: 4px 4px;
