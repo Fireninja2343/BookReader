@@ -667,12 +667,23 @@ async function updateWholeBookCalibrationDisplay() {
   let epubPct = null;
   let audioPct = null;
 
+  // Try live reader first
   if (activeBookObject && activeBookObject.id === bookId && activeSpineArray.length > 0) {
     const totalWords = activeBookObject.totalWords || 0;
     const chapterWordCounts = activeBookObject.chapterWordCounts || [];
     const container = document.getElementById("reader-container");
     const innerPct = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
     epubPct = cumulativeWordPct(activeSpinePointer, innerPct, chapterWordCounts, totalWords);
+  } else {
+    // Fallback: read from stored record
+    const bookRecord = await getBookById(bookId);
+    if (bookRecord) {
+      const totalWords = bookRecord.totalWords || 0;
+      const chapterWordCounts = bookRecord.chapterWordCounts || [];
+      const currentChapter = bookRecord.currentChapter || 0;
+      const scrollOffset = bookRecord.scrollOffset || 0;
+      epubPct = cumulativeWordPct(currentChapter, scrollOffset, chapterWordCounts, totalWords);
+    }
   }
 
   if (activeAudioElement && audiobook) {
@@ -698,17 +709,26 @@ async function setWholeCalibrationEpub() {
   if (!audioPairingTargetBookId) return;
   const bookId = audioPairingTargetBookId;
   const audiobook = await getAudiobookForBook(bookId);
-  if (!audiobook) return;
-  if (activeBookObject && activeSpineArray.length > 0) {
-    const totalWords = activeBookObject.totalWords || 0;
-    const chapterWordCounts = activeBookObject.chapterWordCounts || [];
-    const container = document.getElementById("reader-container");
-    const innerPct = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
-    calibrationWholeEpubPct = cumulativeWordPct(activeSpinePointer, innerPct, chapterWordCounts, totalWords);
-    document.getElementById("whole-calibration-status").textContent += " EPUB reference set.";
-  } else {
-    alert("Please open the book in the reader first.");
+  if (!audiobook) {
+    alert("Audiobook record not found.");
+    return;
   }
+
+  // Fetch the EPUB book record from IndexedDB
+  const bookRecord = await getBookById(bookId);
+  if (!bookRecord) {
+    alert("Book record not found.");
+    return;
+  }
+
+  const totalWords = bookRecord.totalWords || 0;
+  const chapterWordCounts = bookRecord.chapterWordCounts || [];
+  const currentChapter = bookRecord.currentChapter || 0;
+  const scrollOffset = bookRecord.scrollOffset || 0; // innerPct
+
+  // Compute whole‑book percentage from stored data
+  calibrationWholeEpubPct = cumulativeWordPct(currentChapter, scrollOffset, chapterWordCounts, totalWords);
+  document.getElementById("whole-calibration-status").textContent += " EPUB reference set.";
   checkWholeCalibrationReady();
 }
 

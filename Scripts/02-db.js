@@ -959,3 +959,15 @@ function forcePushBookProgressToCloud(bookId) {
     }
   };
 }
+/**
+ Fetches a single book record from `STORE_BOOKS` by its ID.
+ @param {number} bookId - id of the book.
+ @returns {Promise<Object|null>} The book record, or null if not found.
+*/
+function getBookById(bookId) {
+  return new Promise((resolve) => {
+    const transaction = db.transaction([STORE_BOOKS], "readonly");
+    const store = transaction.objectStore(STORE_BOOKS);
+    store.get(bookId).onsuccess = (e) => resolve(e.target.result || null);
+  });
+}
