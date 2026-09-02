@@ -883,18 +883,21 @@ async function setWholeCalibrationEpub() {
     return;
   }
 
-  let spineIndex;
-  let innerPct;
-  const totalWords = activeBookObject?.totalWords || 0;
-  const chapterWordCounts = activeBookObject?.chapterWordCounts || [];
+  let spineIndex, innerPct;
+  let totalWords = 0;
+  let chapterWordCounts = [];
 
-  if (activeBookObject && activeBookObject.id === bookId && chapterWordCounts.length) {
-    // Live reader - same source the display above shows.
+  if (activeBookObject && activeBookObject.id === bookId &&
+      Array.isArray(activeBookObject.chapterWordCounts) && activeBookObject.chapterWordCounts.length) {
+    // Live reader – use its data
+    totalWords = activeBookObject.totalWords || 0;
+    chapterWordCounts = activeBookObject.chapterWordCounts;
     const container = document.getElementById("reader-container");
     const maxScroll = container ? container.scrollHeight - container.clientHeight : 0;
     spineIndex = activeSpinePointer;
     innerPct = maxScroll > 0 ? container.scrollTop / maxScroll : 0;
   } else {
+    // Fallback to persisted record – use ITS data, not the active book's
     const bookRecord = await getBookById(bookId);
     if (!bookRecord) {
       alert("Book record not found.");
@@ -902,11 +905,11 @@ async function setWholeCalibrationEpub() {
     }
     spineIndex = bookRecord.currentChapter || 0;
     innerPct = bookRecord.scrollOffset || 0;
+    totalWords = bookRecord.totalWords || 0;
+    chapterWordCounts = Array.isArray(bookRecord.chapterWordCounts) ? bookRecord.chapterWordCounts : [];
   }
 
   calibrationWholeEpubPct = cumulativeWordPct(spineIndex, innerPct, chapterWordCounts, totalWords);
-  // Assignment, not +=: chained concatenation grew this status line
-  // unboundedly across repeated set/save clicks.
   document.getElementById("whole-calibration-status").textContent = "EPUB reference set.";
   checkWholeCalibrationReady();
 }
