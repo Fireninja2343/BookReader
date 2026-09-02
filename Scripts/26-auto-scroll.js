@@ -121,23 +121,30 @@ const toggleScrollBtn = document.getElementById("btn-toggle-scroll");
  @param {string} [params.glowVar] - CSS var for the fill's box-shadow color. Defaults to "--glow".
 */
 function startScroll(params) {
+  stopScroll();
   activeScrollParams = {
     getStepPx: params?.getStepPx ?? computeAdaptiveStepPx,
     getCooldownMs: params?.getCooldownMs ?? getCooldownMs,
     colorVar: params?.colorVar ?? "--accent",
     glowVar: params?.glowVar ?? "--glow",
+    // "auto" keeps word-density behavior identical to before; sync passes
+    // "instant" so each tick produces exactly one scroll event, which its
+    // consume-once lock relies on.
+    scrollBehavior: params?.scrollBehavior ?? "auto",
   };
   toggleScrollBtn.classList.add("active");
   lastScrollTime = Date.now();
   fill.style.width = "100%";
   interval = setInterval(() => {
     if (!activeScrollParams) {
-        // Params were cleared (e.g., stopScroll called) but interval still running – clean up.
-        clearInterval(interval);
-        interval = null;
-        return;
+      clearInterval(interval);
+      interval = null;
+      return;
     }
-    document.getElementById("reader-container").scrollBy(0, activeScrollParams.getStepPx());
+    document.getElementById("reader-container").scrollBy({
+      top: activeScrollParams.getStepPx(),
+      behavior: activeScrollParams.scrollBehavior,
+    });
     lastScrollTime = Date.now();
   }, activeScrollParams.getCooldownMs());
   fill.style.background = `var(${activeScrollParams.colorVar})`;

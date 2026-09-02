@@ -7,26 +7,12 @@
  24-audio-pairing.js. Owns no state those files already own - just reads
  activeAudioElement/activeSpinePointer/etc. and drives them.
 
- The live scroll loop runs through startScroll()/stopScroll() in
- 26-auto-scroll.js - the same delta-based (scrollBy) tick engine the
- word-density autoscroll uses, just with different step/cooldown/color
- params. Each tick computes a fresh scroll delta from the audio's current
- time rather than tracking an absolute target, so a missed or delayed tick
- self-corrects on the next one instead of compounding drift.
-
- Three things happen here:
-  1. The live sync loop: while "Sync Reading to Audio" is on AND audio is
-     playing, each tick maps activeAudioElement.currentTime to an EPUB
-     scroll position and scrollBy()s the difference, applying the
-     persistent user offset. See the manual-offset section for how user
-     scrolling during sync is handled.
-  2. Mode-switch prompts: when opening the reader or loading audio for a
-     paired book, if the *other* mode has a newer recorded position, ask
-     the user whether to jump to it. One-shot, not continuous, and not
-     forced - declining leaves the current position untouched.
-  3. Uncalibrated books default to offset 0 (EPUB chapter N = audio chapter
-     N) rather than blocking sync outright - calibration refines this,
-     it isn't a prerequisite for a rough first pass.
+ The live scroll loop uses the shared engine (26-auto-scroll.js) with a
+ step function that maps audio time to a scroll delta each tick. The
+ step function arms a consume‑once lock just before scrollBy() is called;
+ the scroll event handler consumes the lock and ignores sync‑caused
+ scrolls. This prevents the sync's own movement from being misread as
+ user input, which previously caused runaway offset accumulation.
 */
 
 let syncModeActive = false;
@@ -37,13 +23,19 @@ let syncUserOffsetPx = 0;
 const SYNC_TICK_MS = 2500;
 
 /**
- True only while a sync tick's own scrollBy() is being applied - scroll
- events firing during this window are guaranteed sync-caused, not user
- input, and are ignored outright rather than compared/measured. This
- avoids the race a delta-comparison approach has (a user scroll landing in
- the gap between ticks could otherwise be misread as sync drift).
+ True between a sync tick arming its scrollBy() and the resulting scroll
+ event being consumed by handleSyncScrollEvent() - events in this window are
+ sync-caused, not user input. The handler CONSUMES the lock; there is
+ deliberately no timer-based release: scroll events fire during the next
+ rendering update, which is not guaranteed to happen before a setTimeout(0)
+ callback, so a timed release races the event and loses, letting this
+ tick's own scroll be misread as user input (which compounded into
+ syncUserOffsetPx and made the reader accelerate away from the audio).
 */
 let syncApplyingScroll = false;
+
+/** Flip to true to re-enable per-tick sync logs. */
+const SYNC_DEBUG = false;
 
 /**
  Resolves the calibrated chapter offset for a paired book, defaulting to 0
@@ -68,7 +60,6 @@ async function toggleReadingAudioSync() {
   const audiobook = await getAudiobookForBook(activeBookObject.id);
   if (!audiobook) return;
 
-  // Require a sync mode to be selected
   if (!audiobook.syncMode) {
     alert("Please select a sync mode (Chapter or Whole) in the pairing panel first.");
     return;
@@ -82,6 +73,10 @@ async function toggleReadingAudioSync() {
     getCooldownMs: () => SYNC_TICK_MS,
     colorVar: "--audio-accent",
     glowVar: "--audio-glow",
+    // Force instant per tick regardless of any CSS scroll-behavior: smooth on
+    // #reader-container - an animated scrollBy fires MANY scroll events, which
+    // would defeat the consume-once lock (only the first would be consumed).
+    scrollBehavior: "instant",
   });
 }
 
@@ -114,6 +109,9 @@ function stopReadingAudioSync() {
 function computeSyncStepPx(audiobook) {
   if (!syncModeActive || !activeAudioElement || activeAudioElement.paused) return 0;
 
+  const container = document.getElementById("reader-container");
+  if (!container) return 0;
+
   const chapterPos = secondsToChapterPosition(audiobook.chapters, activeAudioElement.currentTime);
   if (!chapterPos) return 0;
 
@@ -128,6 +126,9 @@ function computeSyncStepPx(audiobook) {
     wholeBookOffset: audiobook.wholeBookOffset || 0,
   });
 
+  // Audio moved into a different chapter than what's on screen: switch the
+  // rendered chapter and sit this tick out. The next tick computes against
+  // the new chapter's DOM.
   if (scrollTarget.epubSpineIndex !== activeSpinePointer) {
     if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return 0;
     activeSpinePointer = scrollTarget.epubSpineIndex;
@@ -136,52 +137,77 @@ function computeSyncStepPx(audiobook) {
     return 0;
   }
 
-  const container = document.getElementById("reader-container");
   const maxScroll = container.scrollHeight - container.clientHeight;
   const targetScrollTop = Math.max(0, Math.min(maxScroll, scrollTarget.innerPct * maxScroll + syncUserOffsetPx));
+  const delta = targetScrollTop - container.scrollTop;
 
+  if (SYNC_DEBUG) {
+    console.log("[sync] t:", activeAudioElement.currentTime, "chapterPos:", chapterPos,
+      "target:", targetScrollTop, "current:", container.scrollTop, "delta:", delta);
+  }
+
+  // Arm the lock ONLY if scrollBy() will actually move the container. No
+  // movement means no scroll event, so nothing would ever consume the lock
+  // and the next genuine user scroll would be swallowed. (<1px dead-zone:
+  // skipped sub-pixel deltas self-correct on the next tick because every
+  // tick targets an absolute position, not a running total.)
+  if (Math.abs(delta) < 1) return 0;
+
+  // Released by handleSyncScrollEvent() when the scroll event lands - NOT by
+  // a timer. See the declaration comment for why the timed release was wrong.
   syncApplyingScroll = true;
-  setTimeout(() => { syncApplyingScroll = false; }, 0);
-
-  console.log("[sync] currentTime:", activeAudioElement.currentTime);
-  console.log("[sync] chapterPos:", chapterPos);
-  console.log("[sync] scrollTarget:", scrollTarget);
-  console.log("[sync] current scrollTop:", container.scrollTop);
-  console.log("[sync] targetScrollTop:", targetScrollTop);
-  console.log("[sync] delta:", targetScrollTop - container.scrollTop);
-  console.log("[sync] mapChapterToScroll inputs:", {
-    mode: audiobook.syncMode,
-    chapterOffset: resolveChapterOffset(audiobook),
-    audioChapterIndex: chapterPos.audioChapterIndex,
-    percentInChapter: chapterPos.percentInChapter,
-    audiobook: audiobook,
-    chapterWordCounts: activeBookObject?.chapterWordCounts,
-    totalWords: activeBookObject?.totalWords,
-    wholeBookOffset: audiobook.wholeBookOffset || 0,
-  });
-
-  return targetScrollTop - container.scrollTop;
+  return delta;
 }
 
 // -----------------------------------------------------------------
 // MANUAL-SCROLL OFFSET DETECTION
 // -----------------------------------------------------------------
+/*
+ A capturing-phase listener runs alongside the existing
+ onscroll="trackReadingProgress()" HTML binding rather than replacing it -
+ both fire independently, trackReadingProgress() keeps saving normal
+ reading position regardless of sync state.
+
+ Any scroll event that fires while syncApplyingScroll is false is
+ unambiguously user-caused (wheel, drag, keyboard) - the reader's actual
+ scrollTop, compared against what the last sync tick targeted, becomes the
+ new persistent offset. This does NOT fight the user: sync keeps running on
+ the next tick, just from the new offset going forward, per the design.
+*/
 
 let syncLastKnownScrollTop = null;
 
 function attachSyncScrollListener() {
-  syncLastKnownScrollTop = document.getElementById("reader-container").scrollTop;
-  document.getElementById("reader-container").addEventListener("scroll", handleSyncScrollEvent);
+  const container = document.getElementById("reader-container");
+  syncApplyingScroll = false; // never inherit a stale lock from a previous session
+  syncLastKnownScrollTop = container.scrollTop;
+  container.addEventListener("scroll", handleSyncScrollEvent);
 }
 
 function detachSyncScrollListener() {
   document.getElementById("reader-container").removeEventListener("scroll", handleSyncScrollEvent);
   syncLastKnownScrollTop = null;
+  syncApplyingScroll = false;
 }
 
 function handleSyncScrollEvent() {
-  if (!syncModeActive || syncApplyingScroll) return;
+  if (!syncModeActive) return;
   const container = document.getElementById("reader-container");
+
+  // Sync-caused scroll: consume the lock, re-baseline, and do NOT touch
+  // syncUserOffsetPx. Falling through would fold this tick's own delta back
+  // into the offset; since the offset feeds the next tick's target
+  // (delta_n = audioProgress + delta_{n-1}), the reader would accelerate
+  // away from the audio.
+  if (syncApplyingScroll) {
+    syncApplyingScroll = false;
+    syncLastKnownScrollTop = container.scrollTop;
+    return;
+  }
+
+  // User scroll: fold movement since the last event into the offset.
+  // lastKnown is re-baselined on BOTH paths, or a user scroll's delta would
+  // also absorb the preceding sync scroll's displacement.
   if (syncLastKnownScrollTop != null) {
     syncUserOffsetPx += container.scrollTop - syncLastKnownScrollTop;
   }
@@ -191,6 +217,12 @@ function handleSyncScrollEvent() {
 // -----------------------------------------------------------------
 // MODE-SWITCH PROMPTS
 // -----------------------------------------------------------------
+/*
+ Triggered right when a file loads successfully (fresh pair, resume, or
+ opening the reader) - the earliest natural moment, and consistent with
+ where chapter calibration already auto-opens. Declining leaves the
+ current position untouched; this never forces a jump.
+*/
 
 /**
  Call after the reader opens for a paired book. If a listening session is
