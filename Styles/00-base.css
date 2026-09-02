@@ -142,7 +142,7 @@ button.active:hover{
     display: none;
 }
 
-.nav-group button, label.btn {
+header button, label.btn, select {
     font-size: calc(.9vw + 1px);
 }
 
