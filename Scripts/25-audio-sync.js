@@ -132,6 +132,7 @@ function computeSyncStepPx(audiobook) {
     if (scrollTarget.epubSpineIndex < 0 || scrollTarget.epubSpineIndex >= activeSpineArray.length) return 0;
     activeSpinePointer = scrollTarget.epubSpineIndex;
     renderActiveChapterFromZip(activeZipInstance);
+    syncUserOffsetPx = 0;
     return 0;
   }
 
@@ -148,6 +149,16 @@ function computeSyncStepPx(audiobook) {
   console.log("[sync] current scrollTop:", container.scrollTop);
   console.log("[sync] targetScrollTop:", targetScrollTop);
   console.log("[sync] delta:", targetScrollTop - container.scrollTop);
+  console.log("[sync] mapChapterToScroll inputs:", {
+    mode: audiobook.syncMode,
+    chapterOffset: resolveChapterOffset(audiobook),
+    audioChapterIndex: chapterPos.audioChapterIndex,
+    percentInChapter: chapterPos.percentInChapter,
+    audiobook: audiobook,
+    chapterWordCounts: activeBookObject?.chapterWordCounts,
+    totalWords: activeBookObject?.totalWords,
+    wholeBookOffset: audiobook.wholeBookOffset || 0,
+  });
 
   return targetScrollTop - container.scrollTop;
 }

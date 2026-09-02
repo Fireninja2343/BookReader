@@ -399,7 +399,7 @@ function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInC
     if (!chapter) return { epubSpineIndex: 0, innerPct: 0 };
     const chapterDuration = chapter.endSec - chapter.startSec;
     const audioPct = (chapter.startSec + percentInChapter * chapterDuration) / audiobook.duration;
-    const epubPct = Math.min(1, Math.max(0, audioPct + wholeBookOffset));
+    const epubPct = Math.min(1, Math.max(0, audioPct + wholeBookOffset / 100));
     return findEpubChapterForPct(epubPct, chapterWordCounts, totalWords);
   } else {
     // Legacy chapter‑offset mode
@@ -427,7 +427,7 @@ function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInC
 function mapScrollToChapter({ mode, chapterOffset, epubSpineIndex, innerPct, audiobook, chapterWordCounts, totalWords, wholeBookOffset }) {
   if (mode === "whole") {
     const epubPct = cumulativeWordPct(epubSpineIndex, innerPct, chapterWordCounts, totalWords);
-    const audioPct = Math.min(1, Math.max(0, epubPct - wholeBookOffset));
+    const audioPct = Math.min(1, Math.max(0, epubPct - wholeBookOffset / 100));
     const seconds = audioPct * audiobook.duration;
     return secondsToChapterPosition(audiobook.chapters, seconds);
   } else {
@@ -694,7 +694,7 @@ async function updateWholeBookCalibrationDisplay() {
   if (epubPct !== null && audioPct !== null) {
     statusEl.textContent = `📖 EPUB: ${(epubPct * 100).toFixed(1)}%  |  🎧 Audio: ${(audioPct * 100).toFixed(1)}%`;
     const currentOffset = audiobook.wholeBookOffset || 0;
-    const offsetDisplay = (currentOffset * 100).toFixed(1);
+    const offsetDisplay = (currentOffset).toFixed(1);
     const direction = currentOffset >= 0 ? "EPUB is ahead" : "Audio is ahead";
     document.getElementById("whole-offset-display").textContent = `Offset: ${offsetDisplay}% (${direction})`;
   } else {
@@ -963,4 +963,17 @@ async function updateAudioPositionDisplay(bookId) {
     { chapterId: "audio-floating-chapter-display", chapterTimeId: "audio-floating-chapter-time-display", totalTimeId: "audio-floating-total-time-display" },
     chapterPos, audiobook, currentTime,
   );
+}
+/**
+ Adjusts the offset for the whole book calibration.
+ @param {number} delta - The amount to adjust the offset by (positive or negative). 
+ */
+async function adjustWholeBookOffset(delta) {
+  const bookId = audioPairingTargetBookId;
+  if (!bookId) return;
+  const audiobook = await getAudiobookForBook(bookId);
+  if (!audiobook) return;
+  const newOffset = (audiobook.wholeBookOffset || 0) + delta;
+  await setAudiobookSyncMode(bookId, "whole", newOffset);
+  await updateWholeBookCalibrationDisplay();
 }
