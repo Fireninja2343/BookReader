@@ -558,10 +558,10 @@ function recordReadingSessionStart(bookId) {
  it, incrementing totalSessions alongside it. Used when a session actually
  ends, unlike recordReadingSessionStart() which only marks a launch's start.
 
- Sessions under 60 seconds are always discarded as noise, since the rate
+ Sessions under 30 seconds are always discarded as noise, since the rate
  check below isn't meaningful at that scale (a couple pages turned in a few
  seconds can imply an implausible rate even during genuine reading).
- Sessions at or above 60 seconds are judged on implied pages-per-hour
+ Sessions at or above 30 seconds are judged on implied pages-per-hour
  instead: too high implies a progress-bar jump, too low implies a
  stalled/idle tab. See MAX_PLAUSIBLE_PAGES_PER_HOUR/MIN_PLAUSIBLE_PAGES_PER_HOUR
  in 00-config.js.
@@ -580,7 +580,7 @@ function appendReadingSession(bookId, sessionRecord) {
   const duration = sessionRecord.durationSeconds || 0;
   const pages = sessionRecord.pagesRead || 0;
   const impliedPagesPerHour = duration > 0 ? (pages / (duration / 3600)) : 0;
-  const isNoise = duration < 60
+  const isNoise = duration < 30
     || impliedPagesPerHour > Config.Reading.MAX_PLAUSIBLE_PAGES_PER_HOUR
     || impliedPagesPerHour < Config.Reading.MIN_PLAUSIBLE_PAGES_PER_HOUR;
   if (isNoise) {
