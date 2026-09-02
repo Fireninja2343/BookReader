@@ -997,11 +997,11 @@ async function showStatsViewState() {
 
     const longestBookElement = document.getElementById("stat-longest-book");
     if (longestBookElement) 
-        longestBookElement.innerText = longestBook ? `${escapeHtml(longestBook.title)} (${longestBook.totalPages} pages)` : "—";
+        longestBookElement.InnetHtml = longestBook ? `${escapeHtml(longestBook.title)} (${longestBook.totalPages} pages)` : "—";
 
     const shortestBookElement = document.getElementById("stat-shortest-book");
     if (shortestBookElement) 
-        shortestBookElement.innerText = shortestBook ? `${escapeHtml(shortestBook.title)} (${shortestBook.totalPages} pages)` : "—";
+        shortestBookElement.InnetHtml = shortestBook ? `${escapeHtml(shortestBook.title)} (${shortestBook.totalPages} pages)` : "—";
 
     const totalWordsElement = document.getElementById("stat-total-words-read");
     if (totalWordsElement) 
@@ -1024,14 +1024,14 @@ async function showStatsViewState() {
 
     const fastestCompletionElement = document.getElementById("stat-fastest-completion");
     if (fastestCompletionElement) {
-        fastestCompletionElement.innerText = fastestCompletion
+        fastestCompletionElement.InnetHtml = fastestCompletion
             ? `${escapeHtml(fastestCompletion.book.title)} (${formatCompletionDuration(fastestCompletion.durationMs)})`
             : "—";
     }
 
     const slowestCompletionElement = document.getElementById("stat-slowest-completion");
     if (slowestCompletionElement) {
-        slowestCompletionElement.innerText = slowestCompletion
+        slowestCompletionElement.InnetHtml = slowestCompletion
             ? `${escapeHtml(slowestCompletion.book.title)} (${formatCompletionDuration(slowestCompletion.durationMs)})`
             : "—";
     }
@@ -1045,14 +1045,14 @@ async function showStatsViewState() {
 
     const fastestPagesPerDayElement = document.getElementById("stat-fastest-pages-per-day");
     if (fastestPagesPerDayElement) {
-        fastestPagesPerDayElement.innerText = fastestPagesPerDay
+        fastestPagesPerDayElement.InnetHtml = fastestPagesPerDay
             ? `${escapeHtml(fastestPagesPerDay.book.title)} (${fastestPagesPerDay.pagesPerDay.toFixed(1)} p/day)`
             : "—";
     }
 
     const slowestPagesPerDayElement = document.getElementById("stat-slowest-pages-per-day");
     if (slowestPagesPerDayElement) {
-        slowestPagesPerDayElement.innerText = slowestPagesPerDay
+        slowestPagesPerDayElement.InnetHtml = slowestPagesPerDay
             ? `${escapeHtml(slowestPagesPerDay.book.title)} (${slowestPagesPerDay.pagesPerDay.toFixed(1)} p/day)`
             : "—";
     }
