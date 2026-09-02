@@ -50,6 +50,9 @@ function loadM4bAudio(file) {
 */
 function playAudio() {
   if (!activeAudioElement) return undefined;
+  if (activeBookObject && typeof recordListeningPosition === 'function') {
+    recordListeningPosition(activeBookObject.id);
+  }
   return activeAudioElement.play();
 }
 

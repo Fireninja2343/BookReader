@@ -715,7 +715,7 @@ function pairAudiobook(bookId, metadata) {
         chapterOffset: existing.chapterOffset ?? null,
         // Sync mode: null (disabled), "chapter", or "whole". Set by the segmented control.
         syncMode: existing.syncMode ?? null,
-        // Whole-book offset as a percentage (5 = +5%). Used only when syncMode === "whole".
+        // Whole-book offset as fraction (e.g. 0.05 = +5%). Used only when syncMode === "whole".
         wholeBookOffset: existing.wholeBookOffset ?? 0,
       };
       store.put(record);

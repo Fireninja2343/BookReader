@@ -399,7 +399,7 @@ function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInC
     if (!chapter) return { epubSpineIndex: 0, innerPct: 0 };
     const chapterDuration = chapter.endSec - chapter.startSec;
     const audioPct = (chapter.startSec + percentInChapter * chapterDuration) / audiobook.duration;
-    const epubPct = Math.min(1, Math.max(0, audioPct + wholeBookOffset / 100));
+    const epubPct = Math.min(1, Math.max(0, audioPct + wholeBookOffset));
     return findEpubChapterForPct(epubPct, chapterWordCounts, totalWords);
   } else {
     // Legacy chapter‑offset mode
@@ -427,7 +427,7 @@ function mapChapterToScroll({ mode, chapterOffset, audioChapterIndex, percentInC
 function mapScrollToChapter({ mode, chapterOffset, epubSpineIndex, innerPct, audiobook, chapterWordCounts, totalWords, wholeBookOffset }) {
   if (mode === "whole") {
     const epubPct = cumulativeWordPct(epubSpineIndex, innerPct, chapterWordCounts, totalWords);
-    const audioPct = Math.min(1, Math.max(0, epubPct - wholeBookOffset / 100));
+    const audioPct = Math.min(1, Math.max(0, epubPct - wholeBookOffset));
     const seconds = audioPct * audiobook.duration;
     return secondsToChapterPosition(audiobook.chapters, seconds);
   } else {
@@ -692,9 +692,9 @@ async function updateWholeBookCalibrationDisplay() {
 
   const statusEl = document.getElementById("whole-calibration-status");
   if (epubPct !== null && audioPct !== null) {
-    statusEl.textContent = `📖 EPUB: ${(epubPct * 100).toFixed(1)}%  |  🎧 Audio: ${(audioPct * 100).toFixed(1)}%`;
+    statusEl.textContent = `📖 EPUB: ${(epubPct * 100).toFixed(2)}%  |  🎧 Audio: ${(audioPct * 100).toFixed(2)}%`;
     const currentOffset = audiobook.wholeBookOffset || 0;
-    const offsetDisplay = (currentOffset).toFixed(1);
+    const offsetDisplay = (currentOffset * 100).toFixed(2);
     const direction = currentOffset >= 0 ? "EPUB is ahead" : "Audio is ahead";
     document.getElementById("whole-offset-display").textContent = `Offset: ${offsetDisplay}% (${direction})`;
   } else {
@@ -884,7 +884,7 @@ async function restoreOwnListeningPosition(bookId) {
   if (!position || position.lastMode !== "listening") return;
 
   const seconds = chapterPositionToSeconds(audiobook.chapters, position.chapterIndex, position.percentInChapter);
-  if (seconds != null) seekAudio(seconds);
+  if (seconds != null && seconds > 1) seekAudio(seconds);
 }
 
 // -----------------------------------------------------------------
