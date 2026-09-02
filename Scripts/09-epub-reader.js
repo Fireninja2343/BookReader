@@ -217,7 +217,7 @@ document.addEventListener("visibilitychange", () => {
         saveTimeToDB();
         // Tracks background time using the same pause accumulator if not already manually paused.
         if (currentPauseStartTime === null) currentPauseStartTime = Date.now();
-    } else if (document.hasFocus()) {
+    } else{
         // Resolves passive background pauses using SESSION_INACTIVITY_TIMEOUT_MS unless manually paused.
         if (!pauseTracking) resolvePauseOnResume(SESSION_INACTIVITY_TIMEOUT_MS, "hidden-split");
         startActiveReadingTimer();
@@ -404,7 +404,13 @@ function endReadingSession(reason, asOfTime = Date.now()) {
 
     const endTime = asOfTime;
     // Subtracts accumulated short-pause dead time (see resolvePauseOnResume())
-    const durationSeconds = Math.max(0, Math.round((endTime - currentSessionStartTime - currentSessionPausedMs) / 1000));
+    let totalPausedMs = currentSessionPausedMs;
+    // If there's an unresolved pause and the session ends after it started, account for it.
+    if (currentPauseStartTime !== null && endTime >= currentPauseStartTime) {
+        totalPausedMs += (endTime - currentPauseStartTime);
+       currentPauseStartTime = null; // consumed
+    }
+    const durationSeconds = Math.max(0, Math.round((endTime - currentSessionStartTime - totalPausedMs) / 1000));
 
     // Sessions under a few seconds are noise (accidental open/close, or a double-fire),
     // not meaningful reading sessions.
