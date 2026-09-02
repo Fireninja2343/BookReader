@@ -831,14 +831,10 @@ async function updateWholeBookCalibrationDisplay() {
     const totalWords = activeBookObject.totalWords || 0;
     const chapterWordCounts = activeBookObject.chapterWordCounts || [];
     const container = document.getElementById("reader-container");
-    // FIX: `x / 0 || 0` does NOT yield 0 - it yields Infinity (truthy), so a
-    // chapter too short to scroll displayed "Infinity%" and could be
-    // calibrated from. Guard the divisor instead.
     const maxScroll = container ? container.scrollHeight - container.clientHeight : 0;
     const innerPct = maxScroll > 0 ? container.scrollTop / maxScroll : 0;
     epubPct = cumulativeWordPct(activeSpinePointer, innerPct, chapterWordCounts, totalWords);
   } else {
-    // Fallback: read from stored record
     const bookRecord = await getBookById(bookId);
     if (bookRecord) {
       const totalWords = bookRecord.totalWords || 0;
@@ -853,13 +849,19 @@ async function updateWholeBookCalibrationDisplay() {
     audioPct = activeAudioElement.currentTime / audiobook.duration;
   }
 
+  // --- ALWAYS update the offset display, regardless of whether percentages are available ---
+  const currentOffset = audiobook.wholeBookOffset || 0;
+  const offsetPercent = (currentOffset * 100).toFixed(2);
+  let direction;
+  if (currentOffset > 0.0001) direction = "EPUB is ahead";
+  else if (currentOffset < -0.0001) direction = "Audio is ahead";
+  else direction = "aligned";
+  document.getElementById("whole-offset-display").textContent = `Offset: ${offsetPercent}% (${direction})`;
+
+  // Update status line (percentages if available)
   const statusEl = document.getElementById("whole-calibration-status");
   if (epubPct !== null && audioPct !== null) {
     statusEl.textContent = `📖 EPUB: ${(epubPct * 100).toFixed(2)}%  |  🎧 Audio: ${(audioPct * 100).toFixed(2)}%`;
-    const currentOffset = audiobook.wholeBookOffset || 0;
-    const offsetDisplay = (currentOffset * 100).toFixed(2);
-    const direction = currentOffset >= 0 ? "EPUB is ahead" : "Audio is ahead";
-    document.getElementById("whole-offset-display").textContent = `Offset: ${offsetDisplay}% (${direction})`;
   } else {
     statusEl.textContent = "Open the book and load audio to see percentages.";
   }
@@ -910,7 +912,7 @@ async function setWholeCalibrationEpub() {
   }
 
   calibrationWholeEpubPct = cumulativeWordPct(spineIndex, innerPct, chapterWordCounts, totalWords);
-  document.getElementById("whole-calibration-status").textContent = "EPUB reference set.";
+  document.getElementById("whole-calibration-status-text").textContent = "EPUB reference set.";
   checkWholeCalibrationReady();
 }
 
@@ -923,7 +925,7 @@ async function setWholeCalibrationAudio() {
   if (!audiobook) return;
   if (activeAudioElement) {
     calibrationWholeAudioPct = activeAudioElement.currentTime / audiobook.duration;
-    document.getElementById("whole-calibration-status").textContent = "Audio reference set.";
+    document.getElementById("whole-calibration-status-text").textContent = "Audio reference set.";
   } else {
     alert("Please load and play audio first.");
   }
@@ -933,7 +935,7 @@ async function setWholeCalibrationAudio() {
 function checkWholeCalibrationReady() {
   if (calibrationWholeEpubPct !== null && calibrationWholeAudioPct !== null) {
     document.getElementById("whole-save-offset-btn").disabled = false;
-    document.getElementById("whole-calibration-status").textContent =
+    document.getElementById("whole-calibration-status-text").textContent =
       "EPUB + Audio references set - ready to save offset.";
   }
 }
@@ -949,7 +951,7 @@ async function saveWholeCalibrationOffset() {
   await updateWholeBookCalibrationDisplay();
   // Assignment, not +=: updateWholeBookCalibrationDisplay() already rewrote
   // the line above; concatenating onto it accumulated across saves.
-  document.getElementById("whole-calibration-status").textContent = `Offset saved: ${(offset * 100).toFixed(1)}%`;
+  document.getElementById("whole-calibration-status-text").textContent = `Offset saved: ${(offset * 100).toFixed(2)}%`;
   calibrationWholeEpubPct = null;
   calibrationWholeAudioPct = null;
   document.getElementById("whole-save-offset-btn").disabled = true;
