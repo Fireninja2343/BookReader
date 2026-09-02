@@ -612,7 +612,7 @@
             recordListeningPosition(activeBookObject?.id)">⏸</button>
         <button onclick="seekAudio(activeAudioElement.currentTime - 10); recordListeningPosition(activeBookObject?.id)">⏪10s</button>
         <button onclick="seekAudio(activeAudioElement.currentTime + 10); recordListeningPosition(activeBookObject?.id)">10s⏩</button>
-        <button id="btn-sync-reading-audio" onclick="toggleReadingAudioSync(); activateButton(this)">🔗 Sync to Reading</button>
+        <button id="btn-sync-reading-audio" onclick="toggleReadingAudioSync(); toggleButton(this)">🔗 Sync to Reading</button>
     </div>
 
     <div id="version-toast" class="hidden"></div>
