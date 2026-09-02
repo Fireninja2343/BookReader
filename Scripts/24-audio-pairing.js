@@ -872,8 +872,7 @@ async function refreshActiveBookAudioPairingCache(bookId) {
  right after any successful load, before the cross-mode prompt, so
  resuming a listening session picks up mid-chapter rather than always
  restarting at 0:00. No-op (and no prompt) if no listening position was
- ever recorded, or if the most recent record was actually a reading-mode
- write (that case is what promptSyncAudioToReading() handles instead).
+ ever recorded.
 
  @param {number} bookId - id of the book whose audio just loaded.
 */
@@ -881,8 +880,7 @@ async function restoreOwnListeningPosition(bookId) {
   const audiobook = await getAudiobookForBook(bookId);
   if (!audiobook || !activeAudioElement) return;
   const position = await getAudioSyncPosition(bookId);
-  if (!position || position.lastMode !== "listening") return;
-
+  if (!position) return;
   const seconds = chapterPositionToSeconds(audiobook.chapters, position.chapterIndex, position.percentInChapter);
   if (seconds != null && seconds > 1) seekAudio(seconds);
 }
